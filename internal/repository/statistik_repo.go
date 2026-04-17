@@ -111,7 +111,7 @@ func (r *StatistikRepo) GetOverview(ctx context.Context) (*model.OverviewResult,
 	g.Go(func() error {
 		var err error
 		kasusBKProses, err = countQuery(gctx, r.db,
-			`SELECT COUNT(*) FROM trx_bk_kasus WHERE status = 'proses' AND deleted_at IS NULL`)
+			`SELECT COUNT(*) FROM trx_bk_kasus WHERE status = 2 AND deleted_at IS NULL`)
 		return err
 	})
 	g.Go(func() error {
@@ -211,8 +211,8 @@ func (r *StatistikRepo) GetOverview(ctx context.Context) (*model.OverviewResult,
 
 func (r *StatistikRepo) getSparkline7Days(ctx context.Context, month, year int) (*model.SparklineData, error) {
 	type dailyRow struct {
-		Tanggal string `db:"tanggal"`
-		Total   int64  `db:"total"`
+		Tanggal string  `db:"tanggal"`
+		Total   float64 `db:"total"`
 	}
 
 	kehadiranRows, err := r.db.QueryxContext(ctx, `
@@ -234,7 +234,7 @@ func (r *StatistikRepo) getSparkline7Days(ctx context.Context, month, year int) 
 	for kehadiranRows.Next() {
 		var row dailyRow
 		if err := kehadiranRows.StructScan(&row); err == nil {
-			kehadiranMap[row.Tanggal] = row.Total
+			kehadiranMap[row.Tanggal] = int64(row.Total)
 		}
 	}
 
@@ -256,12 +256,12 @@ func (r *StatistikRepo) getSparkline7Days(ctx context.Context, month, year int) 
 	for bkRows.Next() {
 		var row dailyRow
 		if err := bkRows.StructScan(&row); err == nil {
-			bkMap[row.Tanggal] = row.Total
+			bkMap[row.Tanggal] = int64(row.Total)
 		}
 	}
 
 	sppRows, err := r.db.QueryxContext(ctx, `
-		SELECT updated_at::date::text as tanggal, SUM(jumlah) as total
+		SELECT updated_at::date::text as tanggal, SUM(jumlah_bayar) as total
 		FROM trx_pembayaran_spp
 		WHERE updated_at >= CURRENT_DATE - INTERVAL '6 days'
 		  AND updated_at <= CURRENT_DATE + INTERVAL '1 day'
@@ -280,7 +280,7 @@ func (r *StatistikRepo) getSparkline7Days(ctx context.Context, month, year int) 
 		for sppRows.Next() {
 			var row dailyRow
 			if err := sppRows.StructScan(&row); err == nil {
-				sppMap[row.Tanggal] = row.Total
+				sppMap[row.Tanggal] = int64(row.Total)
 			}
 		}
 	}
@@ -312,10 +312,10 @@ func (r *StatistikRepo) getSparkline7Days(ctx context.Context, month, year int) 
 
 func (r *StatistikRepo) GetAkademik(ctx context.Context, tahunAjaranID, kelasID *int64) (*model.AkademikResult, error) {
 	var (
-		totalSiswa    int64
-		totalGuru     int64
-		totalKelas    int64
-		avgNilai      float64
+		totalSiswa int64
+		totalGuru  int64
+		totalKelas int64
+		avgNilai   float64
 	)
 
 	g, gctx := errgroup.WithContext(ctx)
@@ -360,7 +360,7 @@ func (r *StatistikRepo) GetAkademik(ctx context.Context, tahunAjaranID, kelasID 
 		Total        int64  `db:"total"`
 	}
 	genderQ := `
-		SELECT COALESCE(jenis_kelamin, 'Tidak Diketahui') as jenis_kelamin, COUNT(*) as total
+		SELECT jenis_kelamin, COUNT(*) as total
 		FROM mst_siswa WHERE deleted_at IS NULL`
 	if kelasID != nil {
 		genderQ += fmt.Sprintf(` AND mst_kelas_id = %d`, *kelasID)
@@ -375,9 +375,9 @@ func (r *StatistikRepo) GetAkademik(ctx context.Context, tahunAjaranID, kelasID 
 	}
 	for _, row := range genderRows {
 		label := row.JenisKelamin
-		if label == "L" {
+		if label == "1" {
 			label = "Laki-laki"
-		} else if label == "P" {
+		} else if label == "2" {
 			label = "Perempuan"
 		}
 		distribusiGender.Labels = append(distribusiGender.Labels, label)
@@ -399,12 +399,35 @@ func (r *StatistikRepo) GetAkademik(ctx context.Context, tahunAjaranID, kelasID 
 		ORDER BY k.nama_kelas
 	`)
 
-	distribusiKelas := model.ChartSeries{
+	distribusiSiswaPerKelas := model.ChartSeries{
 		Colors: generateColors(len(kelasRows)),
 	}
 	for _, row := range kelasRows {
-		distribusiKelas.Labels = append(distribusiKelas.Labels, row.NamaKelas)
-		distribusiKelas.Data = append(distribusiKelas.Data, row.Total)
+		distribusiSiswaPerKelas.Labels = append(distribusiSiswaPerKelas.Labels, row.NamaKelas)
+		distribusiSiswaPerKelas.Data = append(distribusiSiswaPerKelas.Data, row.Total)
+	}
+
+	// Distribusi per tingkat
+	type tingkatRow struct {
+		Tingkat string `db:"tingkat"`
+		Total   int64  `db:"total"`
+	}
+	var tingkatRows []tingkatRow
+	_ = r.db.SelectContext(ctx, &tingkatRows, `
+		SELECT CONCAT('Tingkat ', k.tingkat) as tingkat, COUNT(s.id) as total
+		FROM mst_kelas k
+		LEFT JOIN mst_siswa s ON s.mst_kelas_id = k.id AND s.deleted_at IS NULL
+		WHERE k.deleted_at IS NULL AND k.tingkat IS NOT NULL
+		GROUP BY k.tingkat
+		ORDER BY k.tingkat
+	`)
+
+	distribusiSiswaPerTingkat := model.ChartSeries{
+		Colors: generateColors(len(tingkatRows)),
+	}
+	for _, row := range tingkatRows {
+		distribusiSiswaPerTingkat.Labels = append(distribusiSiswaPerTingkat.Labels, row.Tingkat)
+		distribusiSiswaPerTingkat.Data = append(distribusiSiswaPerTingkat.Data, row.Total)
 	}
 
 	// Nilai histogram
@@ -466,13 +489,18 @@ func (r *StatistikRepo) GetAkademik(ctx context.Context, tahunAjaranID, kelasID 
 	var topSiswa []model.TopSiswaItem
 	_ = r.db.SelectContext(ctx, &topSiswa, topSiswaQ)
 
-	// Rata-rata nilai per mapel
+	// Rata-rata nilai per mapel (dengan max & min)
 	type mapelRow struct {
 		NamaMapel string  `db:"nama_mapel"`
-		RataRata  float64 `db:"rata_rata"`
+		Avg       float64 `db:"avg_nilai"`
+		Max       float64 `db:"max_nilai"`
+		Min       float64 `db:"min_nilai"`
 	}
 	mapelQ := `
-		SELECT m.nama_mapel, ROUND(AVG(n.nilai)::numeric, 2) as rata_rata
+		SELECT m.nama_mapel,
+			ROUND(AVG(n.nilai)::numeric, 2) as avg_nilai,
+			ROUND(MAX(n.nilai)::numeric, 2) as max_nilai,
+			ROUND(MIN(n.nilai)::numeric, 2) as min_nilai
 		FROM trx_nilai n
 		JOIN trx_ujian u ON u.id = n.trx_ujian_id
 		JOIN mst_mapel m ON m.id = u.mst_mapel_id
@@ -480,15 +508,43 @@ func (r *StatistikRepo) GetAkademik(ctx context.Context, tahunAjaranID, kelasID 
 	if kelasID != nil {
 		mapelQ += fmt.Sprintf(` AND u.mst_kelas_id = %d`, *kelasID)
 	}
-	mapelQ += ` GROUP BY m.id, m.nama_mapel ORDER BY rata_rata DESC`
+	mapelQ += ` GROUP BY m.id, m.nama_mapel ORDER BY avg_nilai DESC`
 
 	var mapelRows []mapelRow
 	_ = r.db.SelectContext(ctx, &mapelRows, mapelQ)
 
-	nilaiPerMapel := model.ChartSeries{Colors: generateColors(len(mapelRows))}
+	rataRataNilaiPerMapel := model.NilaiPerMapelSeries{Colors: generateColors(len(mapelRows))}
 	for _, m := range mapelRows {
-		nilaiPerMapel.Labels = append(nilaiPerMapel.Labels, m.NamaMapel)
-		nilaiPerMapel.Data = append(nilaiPerMapel.Data, int64(m.RataRata))
+		rataRataNilaiPerMapel.Labels = append(rataRataNilaiPerMapel.Labels, m.NamaMapel)
+		rataRataNilaiPerMapel.Avg = append(rataRataNilaiPerMapel.Avg, m.Avg)
+		rataRataNilaiPerMapel.Max = append(rataRataNilaiPerMapel.Max, m.Max)
+		rataRataNilaiPerMapel.Min = append(rataRataNilaiPerMapel.Min, m.Min)
+	}
+
+	// Rata-rata nilai per kelas
+	type nilaiKelasRow struct {
+		NamaKelas string  `db:"nama_kelas"`
+		Avg       float64 `db:"avg_nilai"`
+	}
+	nilaiKelasQ := `
+		SELECT k.nama_kelas, ROUND(AVG(n.nilai)::numeric, 2) as avg_nilai
+		FROM trx_nilai n
+		JOIN trx_ujian u ON u.id = n.trx_ujian_id
+		JOIN mst_siswa s ON s.id = n.mst_siswa_id
+		JOIN mst_kelas k ON k.id = s.mst_kelas_id
+		WHERE n.deleted_at IS NULL`
+	if kelasID != nil {
+		nilaiKelasQ += fmt.Sprintf(` AND u.mst_kelas_id = %d`, *kelasID)
+	}
+	nilaiKelasQ += ` GROUP BY k.id, k.nama_kelas ORDER BY k.nama_kelas`
+
+	var nilaiKelasRows []nilaiKelasRow
+	_ = r.db.SelectContext(ctx, &nilaiKelasRows, nilaiKelasQ)
+
+	rataRataNilaiPerKelas := model.ChartSeries{Colors: generateColors(len(nilaiKelasRows))}
+	for _, k := range nilaiKelasRows {
+		rataRataNilaiPerKelas.Labels = append(rataRataNilaiPerKelas.Labels, k.NamaKelas)
+		rataRataNilaiPerKelas.Data = append(rataRataNilaiPerKelas.Data, int64(k.Avg))
 	}
 
 	return &model.AkademikResult{
@@ -498,80 +554,72 @@ func (r *StatistikRepo) GetAkademik(ctx context.Context, tahunAjaranID, kelasID 
 			TotalKelas:    totalKelas,
 			RataRataNilai: round2(avgNilai),
 		},
-		DistribusiGender: distribusiGender,
-		DistribusiKelas:  distribusiKelas,
-		NilaiHistogram:   histogram,
-		TopSiswa:         topSiswa,
-		NilaiPerMapel:    nilaiPerMapel,
+		DistribusiGender:          distribusiGender,
+		DistribusiSiswaPerKelas:   distribusiSiswaPerKelas,
+		DistribusiSiswaPerTingkat: distribusiSiswaPerTingkat,
+		DistribusiNilai:           histogram,
+		Top10SiswaBerprestasi:     topSiswa,
+		RataRataNilaiPerMapel:     rataRataNilaiPerMapel,
+		RataRataNilaiPerKelas:     rataRataNilaiPerKelas,
 	}, nil
 }
 
 // ─── KEHADIRAN ────────────────────────────────────────────────────────────
 
-func (r *StatistikRepo) GetKehadiran(ctx context.Context, tahunAjaranID, kelasID *int64, bulan, tahun int) (*model.KehadiranResult, error) {
-	var (
-		totalHadir  int64
-		totalIzin   int64
-		totalSakit  int64
-		totalAlpha  int64
-		guruHadir   int64
-		guruTotal   int64
-	)
+func (r *StatistikRepo) GetKehadiran(ctx context.Context, kelasID *int64, startDate, endDate string) (*model.KehadiranResult, error) {
+	if startDate == "" {
+		startDate = fmt.Sprintf("%d-01-01", time.Now().Year())
+	}
+	if endDate == "" {
+		endDate = fmt.Sprintf("%d-12-31", time.Now().Year())
+	}
 
-	baseWhere := fmt.Sprintf(`EXTRACT(YEAR FROM tanggal) = %d AND deleted_at IS NULL`, tahun)
-	if bulan > 0 {
-		baseWhere += fmt.Sprintf(` AND EXTRACT(MONTH FROM tanggal) = %d`, bulan)
-	}
+	baseWhere := fmt.Sprintf(`tanggal >= '%s' AND tanggal <= '%s' AND deleted_at IS NULL`, startDate, endDate)
 	if kelasID != nil {
-		baseWhere += fmt.Sprintf(` AND mst_kelas_id = %d`, *kelasID)
+		baseWhere += fmt.Sprintf(` AND mst_siswa_id IN (SELECT id FROM mst_siswa WHERE mst_kelas_id = %d AND deleted_at IS NULL)`, *kelasID)
 	}
+
+	var (
+		totalHadir int64
+		totalIzin  int64
+		totalSakit int64
+		totalAlpha int64
+		guruHadir  int64
+		guruTotal  int64
+	)
 
 	g, gctx := errgroup.WithContext(ctx)
 
 	g.Go(func() error {
 		var err error
-		totalHadir, err = countQuery(gctx, r.db,
-			fmt.Sprintf(`SELECT COUNT(*) FROM trx_absensi_siswa WHERE %s AND status = 1`, baseWhere))
+		totalHadir, err = countQuery(gctx, r.db, fmt.Sprintf(`SELECT COUNT(*) FROM trx_absensi_siswa WHERE %s AND status = 1`, baseWhere))
 		return err
 	})
 	g.Go(func() error {
 		var err error
-		totalIzin, err = countQuery(gctx, r.db,
-			fmt.Sprintf(`SELECT COUNT(*) FROM trx_absensi_siswa WHERE %s AND status = 3`, baseWhere))
+		totalIzin, err = countQuery(gctx, r.db, fmt.Sprintf(`SELECT COUNT(*) FROM trx_absensi_siswa WHERE %s AND status = 2`, baseWhere))
 		return err
 	})
 	g.Go(func() error {
 		var err error
-		totalSakit, err = countQuery(gctx, r.db,
-			fmt.Sprintf(`SELECT COUNT(*) FROM trx_absensi_siswa WHERE %s AND status = 2`, baseWhere))
+		totalSakit, err = countQuery(gctx, r.db, fmt.Sprintf(`SELECT COUNT(*) FROM trx_absensi_siswa WHERE %s AND status = 3`, baseWhere))
 		return err
 	})
 	g.Go(func() error {
 		var err error
-		totalAlpha, err = countQuery(gctx, r.db,
-			fmt.Sprintf(`SELECT COUNT(*) FROM trx_absensi_siswa WHERE %s AND status = 4`, baseWhere))
+		totalAlpha, err = countQuery(gctx, r.db, fmt.Sprintf(`SELECT COUNT(*) FROM trx_absensi_siswa WHERE %s AND status = 4`, baseWhere))
 		return err
 	})
 
-	guruWhere := fmt.Sprintf(`EXTRACT(YEAR FROM tanggal) = %d AND deleted_at IS NULL`, tahun)
-	if bulan > 0 {
-		guruWhere += fmt.Sprintf(` AND EXTRACT(MONTH FROM tanggal) = %d`, bulan)
-	}
-
+	guruWhere := fmt.Sprintf(`tanggal >= '%s' AND tanggal <= '%s' AND deleted_at IS NULL`, startDate, endDate)
 	g.Go(func() error {
 		var err error
-		guruHadir, err = countQuery(gctx, r.db,
-			fmt.Sprintf(`SELECT COUNT(*) FROM trx_absensi_guru WHERE %s AND status IS NOT NULL`, guruWhere))
-		_ = err
-		// Count hadir guru (any check-in record = present)
-		guruHadir, err = countQuery(gctx, r.db,
-			fmt.Sprintf(`SELECT COUNT(*) FROM trx_absensi_guru WHERE %s AND jam_masuk IS NOT NULL`, guruWhere))
+		guruHadir, err = countQuery(gctx, r.db, fmt.Sprintf(`SELECT COUNT(*) FROM trx_absensi_guru WHERE %s AND status = 1`, guruWhere))
 		return err
 	})
 	g.Go(func() error {
 		var err error
-		guruTotal, err = countQuery(gctx, r.db,
-			fmt.Sprintf(`SELECT COUNT(*) FROM trx_absensi_guru WHERE %s`, guruWhere))
+		guruTotal, err = countQuery(gctx, r.db, fmt.Sprintf(`SELECT COUNT(*) FROM trx_absensi_guru WHERE %s`, guruWhere))
 		return err
 	})
 
@@ -580,157 +628,215 @@ func (r *StatistikRepo) GetKehadiran(ctx context.Context, tahunAjaranID, kelasID
 	}
 
 	total := totalHadir + totalIzin + totalSakit + totalAlpha
-	var pctHadir float64
+	var pctSiswa float64
 	if total > 0 {
-		pctHadir = round2(float64(totalHadir) / float64(total) * 100)
+		pctSiswa = round2(float64(totalHadir) / float64(total) * 100)
 	}
-
-	var guruPct float64
+	var pctGuru float64
 	if guruTotal > 0 {
-		guruPct = round2(float64(guruHadir) / float64(guruTotal) * 100)
+		pctGuru = round2(float64(guruHadir) / float64(guruTotal) * 100)
 	}
 
-	// Tren bulanan (12 months)
-	type monthRow struct {
-		Bulan  int   `db:"bulan"`
-		Hadir  int64 `db:"hadir"`
-		Izin   int64 `db:"izin"`
-		Sakit  int64 `db:"sakit"`
-		Alpha  int64 `db:"alpha"`
+	// Tren kehadiran (by month)
+	type trenRow struct {
+		Tahun int   `db:"tahun"`
+		Bulan int   `db:"bulan"`
+		Hadir int64 `db:"hadir"`
+		Izin  int64 `db:"izin"`
+		Sakit int64 `db:"sakit"`
+		Alpha int64 `db:"alpha"`
 	}
-	var monthRows []monthRow
-	_ = r.db.SelectContext(ctx, &monthRows, fmt.Sprintf(`
+	var trenRows []trenRow
+	_ = r.db.SelectContext(ctx, &trenRows, fmt.Sprintf(`
 		SELECT
+			EXTRACT(YEAR FROM tanggal)::int as tahun,
 			EXTRACT(MONTH FROM tanggal)::int as bulan,
 			SUM(CASE WHEN status = 1 THEN 1 ELSE 0 END) as hadir,
-			SUM(CASE WHEN status = 3 THEN 1 ELSE 0 END) as izin,
-			SUM(CASE WHEN status = 2 THEN 1 ELSE 0 END) as sakit,
+			SUM(CASE WHEN status = 2 THEN 1 ELSE 0 END) as izin,
+			SUM(CASE WHEN status = 3 THEN 1 ELSE 0 END) as sakit,
 			SUM(CASE WHEN status = 4 THEN 1 ELSE 0 END) as alpha
 		FROM trx_absensi_siswa
-		WHERE EXTRACT(YEAR FROM tanggal) = %d AND deleted_at IS NULL %s
-		GROUP BY EXTRACT(MONTH FROM tanggal)::int
-		ORDER BY bulan
-	`, tahun, func() string {
-		if kelasID != nil {
-			return fmt.Sprintf(` AND mst_kelas_id = %d`, *kelasID)
-		}
-		return ""
-	}()))
+		WHERE %s
+		GROUP BY tahun, bulan
+		ORDER BY tahun, bulan
+	`, baseWhere))
 
-	monthMap := map[int]monthRow{}
-	for _, row := range monthRows {
-		monthMap[row.Bulan] = row
+	trenKehadiran := make([]model.KehadiranTrenItem, 0, len(trenRows))
+	for _, row := range trenRows {
+		trenKehadiran = append(trenKehadiran, model.KehadiranTrenItem{
+			Tanggal: fmt.Sprintf("%s %d", namaBulan(row.Bulan), row.Tahun),
+			Hadir:   row.Hadir,
+			Izin:    row.Izin,
+			Sakit:   row.Sakit,
+			Alpha:   row.Alpha,
+		})
 	}
 
-	labels := make([]string, 12)
-	hadir := make([]int64, 12)
-	izin := make([]int64, 12)
-	sakit := make([]int64, 12)
-	alpha := make([]int64, 12)
-	for m := 1; m <= 12; m++ {
-		labels[m-1] = namaBulan(m)
-		row := monthMap[m]
-		hadir[m-1] = row.Hadir
-		izin[m-1] = row.Izin
-		sakit[m-1] = row.Sakit
-		alpha[m-1] = row.Alpha
+	// Distribusi status
+	distribusiStatus := []model.DistribusiStatusItem{
+		{Status: "Hadir", Jumlah: totalHadir},
+		{Status: "Izin", Jumlah: totalIzin},
+		{Status: "Sakit", Jumlah: totalSakit},
+		{Status: "Alpha", Jumlah: totalAlpha},
 	}
 
-	trenBulanan := model.MultiSeriesChart{
-		Labels: labels,
-		Datasets: []model.DatasetItem{
-			{Label: "Hadir", Data: hadir, Color: "#10B981"},
-			{Label: "Izin", Data: izin, Color: "#3B82F6"},
-			{Label: "Sakit", Data: sakit, Color: "#F59E0B"},
-			{Label: "Alpha", Data: alpha, Color: "#EF4444"},
-		},
+	// Kehadiran per kelas (persentase hadir)
+	type kelasPersenRow struct {
+		NamaKelas  string `db:"nama_kelas"`
+		TotalHadir int64  `db:"total_hadir"`
+		Total      int64  `db:"total"`
 	}
-
-	// Per kelas
-	type kelasRow struct {
-		NamaKelas string `db:"nama_kelas"`
-		Total     int64  `db:"total"`
-	}
-	var perKelas []kelasRow
-	_ = r.db.SelectContext(ctx, &perKelas, fmt.Sprintf(`
-		SELECT k.nama_kelas, COUNT(a.id) as total
+	var kelasRows []kelasPersenRow
+	_ = r.db.SelectContext(ctx, &kelasRows, fmt.Sprintf(`
+		SELECT k.nama_kelas,
+			COUNT(CASE WHEN a.status = 1 THEN 1 END) as total_hadir,
+			COUNT(a.id) as total
 		FROM mst_kelas k
-		LEFT JOIN trx_absensi_siswa a ON a.mst_kelas_id = k.id
-			AND EXTRACT(YEAR FROM a.tanggal) = %d
-			AND a.status = 1 AND a.deleted_at IS NULL
+		LEFT JOIN mst_siswa ms ON ms.mst_kelas_id = k.id AND ms.deleted_at IS NULL
+		LEFT JOIN trx_absensi_siswa a ON a.mst_siswa_id = ms.id
+			AND a.tanggal >= '%s' AND a.tanggal <= '%s' AND a.deleted_at IS NULL
 		WHERE k.deleted_at IS NULL
 		GROUP BY k.id, k.nama_kelas
-		ORDER BY total DESC
-		LIMIT 15
-	`, tahun))
+		ORDER BY k.nama_kelas
+	`, startDate, endDate))
 
-	distribusiKelas := model.ChartSeries{Colors: generateColors(len(perKelas))}
-	for _, k := range perKelas {
-		distribusiKelas.Labels = append(distribusiKelas.Labels, k.NamaKelas)
-		distribusiKelas.Data = append(distribusiKelas.Data, k.Total)
+	kehadiranPerKelas := make([]model.KehadiranPerKelasItem, 0, len(kelasRows))
+	for _, row := range kelasRows {
+		var pct float64
+		if row.Total > 0 {
+			pct = round2(float64(row.TotalHadir) / float64(row.Total) * 100)
+		}
+		kehadiranPerKelas = append(kehadiranPerKelas, model.KehadiranPerKelasItem{
+			Kelas:      row.NamaKelas,
+			Persentase: pct,
+		})
 	}
+
+	// Heatmap per hari (day of week, Mon-Fri)
+	type hariRow struct {
+		DOW   int   `db:"dow"`
+		Hadir int64 `db:"hadir"`
+		Izin  int64 `db:"izin"`
+		Sakit int64 `db:"sakit"`
+		Alpha int64 `db:"alpha"`
+	}
+	var hariRows []hariRow
+	_ = r.db.SelectContext(ctx, &hariRows, fmt.Sprintf(`
+		SELECT
+			EXTRACT(DOW FROM tanggal)::int as dow,
+			SUM(CASE WHEN status = 1 THEN 1 ELSE 0 END) as hadir,
+			SUM(CASE WHEN status = 2 THEN 1 ELSE 0 END) as izin,
+			SUM(CASE WHEN status = 3 THEN 1 ELSE 0 END) as sakit,
+			SUM(CASE WHEN status = 4 THEN 1 ELSE 0 END) as alpha
+		FROM trx_absensi_siswa
+		WHERE %s
+		GROUP BY dow
+		ORDER BY dow
+	`, baseWhere))
+
+	namaHari := []string{"Minggu", "Senin", "Selasa", "Rabu", "Kamis", "Jumat", "Sabtu"}
+	hariMap := map[int]hariRow{}
+	for _, row := range hariRows {
+		hariMap[row.DOW] = row
+	}
+	heatmapHari := make([]model.HeatmapHariItem, 0, 5)
+	for dow := 1; dow <= 5; dow++ {
+		row := hariMap[dow]
+		rowTotal := row.Hadir + row.Izin + row.Sakit + row.Alpha
+		var pct float64
+		if rowTotal > 0 {
+			pct = round2(float64(row.Hadir) / float64(rowTotal) * 100)
+		}
+		heatmapHari = append(heatmapHari, model.HeatmapHariItem{
+			Hari:            namaHari[dow],
+			Hadir:           row.Hadir,
+			Izin:            row.Izin,
+			Sakit:           row.Sakit,
+			Alpha:           row.Alpha,
+			PersentaseHadir: pct,
+		})
+	}
+
+	// Siswa alpha terbanyak
+	alphaFilter := fmt.Sprintf(`a.tanggal >= '%s' AND a.tanggal <= '%s' AND a.deleted_at IS NULL AND a.status = 4`, startDate, endDate)
+	if kelasID != nil {
+		alphaFilter += fmt.Sprintf(` AND s.mst_kelas_id = %d`, *kelasID)
+	}
+	var siswaAlpha []model.SiswaAlphaItem
+	_ = r.db.SelectContext(ctx, &siswaAlpha, fmt.Sprintf(`
+		SELECT s.nama, s.nis, k.nama_kelas, COUNT(a.id) as jumlah_alpha
+		FROM trx_absensi_siswa a
+		JOIN mst_siswa s ON s.id = a.mst_siswa_id AND s.deleted_at IS NULL
+		JOIN mst_kelas k ON k.id = s.mst_kelas_id
+		WHERE %s
+		GROUP BY s.id, s.nama, s.nis, k.nama_kelas
+		ORDER BY jumlah_alpha DESC
+		LIMIT 10
+	`, alphaFilter))
 
 	return &model.KehadiranResult{
 		Summary: model.KehadiranSummary{
-			TotalHadir:      totalHadir,
-			TotalIzin:       totalIzin,
-			TotalSakit:      totalSakit,
-			TotalAlpha:      totalAlpha,
-			PersentaseHadir: pctHadir,
+			TingkatKehadiranSiswa: pctSiswa,
+			TotalHadir:            totalHadir,
+			TingkatKehadiranGuru:  pctGuru,
 		},
-		TrenBulanan: trenBulanan,
-		StatusDonut: model.ChartSeries{
-			Labels: []string{"Hadir", "Izin", "Sakit", "Alpha"},
-			Data:   []int64{totalHadir, totalIzin, totalSakit, totalAlpha},
-			Colors: []string{"#10B981", "#3B82F6", "#F59E0B", "#EF4444"},
-		},
-		PerKelas: distribusiKelas,
-		GuruKehadiran: model.GuruKehadiran{
-			TotalHadir:      guruHadir,
-			TotalAbsensi:    guruTotal,
-			PersentaseHadir: guruPct,
-		},
+		TrenKehadiran:       trenKehadiran,
+		DistribusiStatus:    distribusiStatus,
+		KehadiranPerKelas:   kehadiranPerKelas,
+		HeatmapHari:         heatmapHari,
+		SiswaAlphaTerbanyak: siswaAlpha,
 	}, nil
 }
 
 // ─── KEUANGAN ─────────────────────────────────────────────────────────────
 
-func (r *StatistikRepo) GetKeuangan(ctx context.Context, tahun int) (*model.KeuanganResult, error) {
-	// Get lunas reference code
-	var lunasCode string
-	_ = r.db.QueryRowContext(ctx, `
-		SELECT code FROM sys_references
-		WHERE group_name = 'status_bayar' AND name = 'Lunas'
-		LIMIT 1
-	`).Scan(&lunasCode)
-	if lunasCode == "" {
-		lunasCode = "1" // fallback
+func (r *StatistikRepo) GetKeuangan(ctx context.Context, tahun int, kelasID *int64) (*model.KeuanganResult, error) {
+	// status: 1=Lunas, 2=Belum Lunas, 3=Pending, 4=Batal
+	// filter by kelas via JOIN mst_siswa
+	kelasJoin := ""
+	kelasWhere := ""
+	if kelasID != nil {
+		kelasJoin = `JOIN mst_siswa ms ON ms.id = p.mst_siswa_id`
+		kelasWhere = fmt.Sprintf(` AND ms.mst_kelas_id = %d`, *kelasID)
 	}
 
-	var totalPendapatan, totalLunas, totalBelumLunas int64
+	baseYear := fmt.Sprintf(`p.tahun = %d AND p.deleted_at IS NULL`, tahun)
+	prevYear := fmt.Sprintf(`p.tahun = %d AND p.deleted_at IS NULL`, tahun-1)
+
+	var totalPendapatan, prevPendapatan, totalTunggakan int64
+	var totalLunas, totalAll int64
 
 	g, gctx := errgroup.WithContext(ctx)
+
 	g.Go(func() error {
-		return r.db.QueryRowContext(gctx, fmt.Sprintf(`
-			SELECT COALESCE(SUM(jumlah), 0)
-			FROM trx_pembayaran_spp
-			WHERE EXTRACT(YEAR FROM created_at) = %d AND status = '%s'
-		`, tahun, lunasCode)).Scan(&totalPendapatan)
+		var sum float64
+		q := fmt.Sprintf(`SELECT COALESCE(SUM(p.jumlah_bayar), 0) FROM trx_pembayaran_spp p %s WHERE %s AND p.status = 1 %s`, kelasJoin, baseYear, kelasWhere)
+		err := r.db.QueryRowContext(gctx, q).Scan(&sum)
+		totalPendapatan = int64(sum)
+		return err
 	})
 	g.Go(func() error {
-		var err error
-		totalLunas, err = countQuery(gctx, r.db, fmt.Sprintf(`
-			SELECT COUNT(*) FROM trx_pembayaran_spp
-			WHERE EXTRACT(YEAR FROM created_at) = %d AND status = '%s'
-		`, tahun, lunasCode))
+		var sum float64
+		q := fmt.Sprintf(`SELECT COALESCE(SUM(p.jumlah_bayar), 0) FROM trx_pembayaran_spp p %s WHERE %s AND p.status = 1 %s`, kelasJoin, prevYear, kelasWhere)
+		err := r.db.QueryRowContext(gctx, q).Scan(&sum)
+		prevPendapatan = int64(sum)
+		return err
+	})
+	g.Go(func() error {
+		var sum float64
+		q := fmt.Sprintf(`SELECT COALESCE(SUM(p.jumlah_bayar), 0) FROM trx_pembayaran_spp p %s WHERE %s AND p.status = 2 %s`, kelasJoin, baseYear, kelasWhere)
+		err := r.db.QueryRowContext(gctx, q).Scan(&sum)
+		totalTunggakan = int64(sum)
 		return err
 	})
 	g.Go(func() error {
 		var err error
-		totalBelumLunas, err = countQuery(gctx, r.db, fmt.Sprintf(`
-			SELECT COUNT(*) FROM trx_pembayaran_spp
-			WHERE EXTRACT(YEAR FROM created_at) = %d AND status != '%s'
-		`, tahun, lunasCode))
+		totalLunas, err = countQuery(gctx, r.db, fmt.Sprintf(`SELECT COUNT(*) FROM trx_pembayaran_spp p %s WHERE %s AND p.status = 1 %s`, kelasJoin, baseYear, kelasWhere))
+		return err
+	})
+	g.Go(func() error {
+		var err error
+		totalAll, err = countQuery(gctx, r.db, fmt.Sprintf(`SELECT COUNT(*) FROM trx_pembayaran_spp p %s WHERE %s AND p.status IN (1,2) %s`, kelasJoin, baseYear, kelasWhere))
 		return err
 	})
 
@@ -738,81 +844,222 @@ func (r *StatistikRepo) GetKeuangan(ctx context.Context, tahun int) (*model.Keua
 		return nil, err
 	}
 
-	total := totalLunas + totalBelumLunas
-	var pctLunas float64
-	if total > 0 {
-		pctLunas = round2(float64(totalLunas) / float64(total) * 100)
+	var collectionRate float64
+	if totalAll > 0 {
+		collectionRate = round2(float64(totalLunas) / float64(totalAll) * 100)
+	}
+	var yoyGrowth float64
+	if prevPendapatan > 0 {
+		yoyGrowth = round2(float64(totalPendapatan-prevPendapatan) / float64(prevPendapatan) * 100)
+	}
+	var rataRataBulanan int64
+	if totalPendapatan > 0 {
+		rataRataBulanan = totalPendapatan / 12
 	}
 
-	// Tren bulanan
-	type monthRow struct {
-		Bulan int   `db:"bulan"`
-		Total int64 `db:"total"`
+	// Tren pendapatan per bulan
+	type trenRow struct {
+		Bulan           int     `db:"bulan"`
+		Pendapatan      float64 `db:"pendapatan"`
+		JumlahTransaksi int64   `db:"jumlah_transaksi"`
 	}
-	var trenRows []monthRow
+	var trenRows []trenRow
 	_ = r.db.SelectContext(ctx, &trenRows, fmt.Sprintf(`
-		SELECT EXTRACT(MONTH FROM created_at)::int as bulan, COALESCE(SUM(jumlah), 0) as total
-		FROM trx_pembayaran_spp
-		WHERE EXTRACT(YEAR FROM created_at) = %d AND status = '%s'
-		GROUP BY EXTRACT(MONTH FROM created_at)::int
-		ORDER BY bulan
-	`, tahun, lunasCode))
+		SELECT p.bulan,
+			COALESCE(SUM(p.jumlah_bayar), 0) as pendapatan,
+			COUNT(*) as jumlah_transaksi
+		FROM trx_pembayaran_spp p %s
+		WHERE %s AND p.status = 1 %s
+		GROUP BY p.bulan
+		ORDER BY p.bulan
+	`, kelasJoin, baseYear, kelasWhere))
 
-	trenMap := map[int]int64{}
+	trenMap := map[int]trenRow{}
 	for _, row := range trenRows {
-		trenMap[row.Bulan] = row.Total
+		trenMap[row.Bulan] = row
 	}
-
-	trenLabels := make([]string, 12)
-	trenData := make([]int64, 12)
+	trenPendapatan := make([]model.TrenPendapatanItem, 12)
 	for m := 1; m <= 12; m++ {
-		trenLabels[m-1] = namaBulan(m)
-		trenData[m-1] = trenMap[m]
+		row := trenMap[m]
+		trenPendapatan[m-1] = model.TrenPendapatanItem{
+			Bulan:           namaBulan(m),
+			Pendapatan:      int64(row.Pendapatan),
+			JumlahTransaksi: row.JumlahTransaksi,
+		}
 	}
 
-	// Tunggakan per kelas
-	var tunggakanRows []model.TunggakanKelas
-	_ = r.db.SelectContext(ctx, &tunggakanRows, fmt.Sprintf(`
-		SELECT k.nama_kelas, COUNT(p.id) as total_tunggak
-		FROM trx_pembayaran_spp p
-		JOIN mst_siswa s ON s.id = p.mst_siswa_id
-		JOIN mst_kelas k ON k.id = s.mst_kelas_id
-		WHERE EXTRACT(YEAR FROM p.created_at) = %d AND p.status != '%s'
+	// Distribusi status
+	type statusRow struct {
+		Status int   `db:"status"`
+		Jumlah int64 `db:"jumlah"`
+	}
+	var statusRows []statusRow
+	_ = r.db.SelectContext(ctx, &statusRows, fmt.Sprintf(`
+		SELECT p.status, COUNT(*) as jumlah
+		FROM trx_pembayaran_spp p %s
+		WHERE %s %s
+		GROUP BY p.status
+		ORDER BY p.status
+	`, kelasJoin, baseYear, kelasWhere))
+
+	statusNames := map[int]string{1: "Lunas", 2: "Belum Lunas", 3: "Pending", 4: "Batal"}
+	distribusiStatus := make([]model.KeuanganStatusItem, 0, len(statusRows))
+	for _, row := range statusRows {
+		name := statusNames[row.Status]
+		if name == "" {
+			name = fmt.Sprintf("Status %d", row.Status)
+		}
+		distribusiStatus = append(distribusiStatus, model.KeuanganStatusItem{
+			Status: name,
+			Jumlah: row.Jumlah,
+		})
+	}
+
+	// Collection rate per kelas
+	type kelasRateRow struct {
+		NamaKelas  string `db:"nama_kelas"`
+		TotalLunas int64  `db:"total_lunas"`
+		Total      int64  `db:"total"`
+	}
+	var kelasRateRows []kelasRateRow
+	_ = r.db.SelectContext(ctx, &kelasRateRows, fmt.Sprintf(`
+		SELECT k.nama_kelas,
+			COUNT(CASE WHEN p.status = 1 THEN 1 END) as total_lunas,
+			COUNT(CASE WHEN p.status IN (1,2) THEN 1 END) as total
+		FROM mst_kelas k
+		LEFT JOIN mst_siswa ms ON ms.mst_kelas_id = k.id AND ms.deleted_at IS NULL
+		LEFT JOIN trx_pembayaran_spp p ON p.mst_siswa_id = ms.id AND p.tahun = %d AND p.deleted_at IS NULL
+		WHERE k.deleted_at IS NULL
 		GROUP BY k.id, k.nama_kelas
-		ORDER BY total_tunggak DESC
-		LIMIT 10
-	`, tahun, lunasCode))
+		ORDER BY k.nama_kelas
+	`, tahun))
+
+	collectionPerKelas := make([]model.CollectionRateKelas, 0, len(kelasRateRows))
+	for _, row := range kelasRateRows {
+		var rate float64
+		if row.Total > 0 {
+			rate = round2(float64(row.TotalLunas) / float64(row.Total) * 100)
+		}
+		collectionPerKelas = append(collectionPerKelas, model.CollectionRateKelas{
+			Kelas: row.NamaKelas,
+			Rate:  rate,
+		})
+	}
+
+	// Tunggakan per bulan (belum lunas)
+	type tunggakanRow struct {
+		Bulan     int     `db:"bulan"`
+		Tunggakan float64 `db:"tunggakan"`
+	}
+	var tunggakanRows []tunggakanRow
+	_ = r.db.SelectContext(ctx, &tunggakanRows, fmt.Sprintf(`
+		SELECT p.bulan, COALESCE(SUM(p.jumlah_bayar), 0) as tunggakan
+		FROM trx_pembayaran_spp p %s
+		WHERE %s AND p.status = 2 %s
+		GROUP BY p.bulan
+		ORDER BY p.bulan
+	`, kelasJoin, baseYear, kelasWhere))
+
+	tunggakanMap := map[int]int64{}
+	for _, row := range tunggakanRows {
+		tunggakanMap[row.Bulan] = int64(row.Tunggakan)
+	}
+	tunggakanPerBulan := make([]model.TunggakanBulanItem, 12)
+	for m := 1; m <= 12; m++ {
+		tunggakanPerBulan[m-1] = model.TunggakanBulanItem{
+			Bulan:     namaBulan(m),
+			Tunggakan: tunggakanMap[m],
+		}
+	}
+
+	// Distribusi metode pembayaran
+	type metodeRow struct {
+		Metode int   `db:"metode"`
+		Jumlah int64 `db:"jumlah"`
+	}
+	var metodeRows []metodeRow
+	_ = r.db.SelectContext(ctx, &metodeRows, fmt.Sprintf(`
+		SELECT p.metode_pembayaran as metode, COUNT(*) as jumlah
+		FROM trx_pembayaran_spp p %s
+		WHERE %s AND p.status = 1 %s
+		GROUP BY p.metode_pembayaran
+		ORDER BY p.metode_pembayaran
+	`, kelasJoin, baseYear, kelasWhere))
+
+	metodeNames := map[int]string{1: "Tunai", 2: "Transfer", 3: "Virtual Account", 4: "QRIS"}
+	distribusiMetode := make([]model.MetodePembayaranItem, 0, len(metodeRows))
+	for _, row := range metodeRows {
+		name := metodeNames[row.Metode]
+		if name == "" {
+			name = fmt.Sprintf("Metode %d", row.Metode)
+		}
+		distribusiMetode = append(distribusiMetode, model.MetodePembayaranItem{
+			Metode: name,
+			Jumlah: row.Jumlah,
+		})
+	}
+
+	// Siswa tunggakan terbanyak
+	siswaTunggakanQ := fmt.Sprintf(`
+		SELECT s.nama, k.nama_kelas,
+			COALESCE(SUM(p.jumlah_bayar), 0) as total_tunggakan,
+			COUNT(p.id) as jumlah_bulan
+		FROM mst_siswa s
+		JOIN mst_kelas k ON k.id = s.mst_kelas_id
+		JOIN trx_pembayaran_spp p ON p.mst_siswa_id = s.id
+		WHERE p.tahun = %d AND p.status = 2 AND p.deleted_at IS NULL AND s.deleted_at IS NULL
+	`, tahun)
+	if kelasID != nil {
+		siswaTunggakanQ += fmt.Sprintf(` AND s.mst_kelas_id = %d`, *kelasID)
+	}
+	siswaTunggakanQ += ` GROUP BY s.id, s.nama, k.nama_kelas ORDER BY total_tunggakan DESC LIMIT 10`
+
+	type siswaTunggakanRow struct {
+		Nama           string  `db:"nama"`
+		NamaKelas      string  `db:"nama_kelas"`
+		TotalTunggakan float64 `db:"total_tunggakan"`
+		JumlahBulan    int64   `db:"jumlah_bulan"`
+	}
+	var siswaTunggakanRows []siswaTunggakanRow
+	_ = r.db.SelectContext(ctx, &siswaTunggakanRows, siswaTunggakanQ)
+
+	siswaTunggakan := make([]model.SiswaTunggakanItem, 0, len(siswaTunggakanRows))
+	for _, row := range siswaTunggakanRows {
+		siswaTunggakan = append(siswaTunggakan, model.SiswaTunggakanItem{
+			Nama:           row.Nama,
+			Kelas:          row.NamaKelas,
+			TotalTunggakan: int64(row.TotalTunggakan),
+			JumlahBulan:    row.JumlahBulan,
+		})
+	}
 
 	return &model.KeuanganResult{
 		Summary: model.KeuanganSummary{
 			TotalPendapatan: totalPendapatan,
-			TotalLunas:      totalLunas,
-			TotalBelumLunas: totalBelumLunas,
-			PersentaseLunas: pctLunas,
+			RataRataBulanan: rataRataBulanan,
+			TotalTunggakan:  totalTunggakan,
+			CollectionRate:  collectionRate,
+			YoYGrowth:       yoyGrowth,
 		},
-		TrenBulanan: model.ChartSeries{
-			Labels: trenLabels,
-			Data:   trenData,
-			Color:  "#10B981",
-		},
-		StatusDistribusi: model.ChartSeries{
-			Labels: []string{"Lunas", "Belum Lunas"},
-			Data:   []int64{totalLunas, totalBelumLunas},
-			Colors: []string{"#10B981", "#EF4444"},
-		},
-		TunggakanPerKelas: tunggakanRows,
+		TrenPendapatan:          trenPendapatan,
+		DistribusiStatus:        distribusiStatus,
+		CollectionRatePerKelas:  collectionPerKelas,
+		TunggakanPerBulan:       tunggakanPerBulan,
+		DistribusiMetode:        distribusiMetode,
+		SiswaTunggakanTerbanyak: siswaTunggakan,
 	}, nil
 }
 
 // ─── BK ───────────────────────────────────────────────────────────────────
 
 func (r *StatistikRepo) GetBK(ctx context.Context, tahun int, kelasID *int64) (*model.BKResult, error) {
-	baseWhere := fmt.Sprintf(`EXTRACT(YEAR FROM trx_bk_kasus.created_at) = %d AND trx_bk_kasus.deleted_at IS NULL`, tahun)
+	// baseWhere uses bare column names (no alias) — works for all queries since we avoid table aliases
+	baseWhere := fmt.Sprintf(`EXTRACT(YEAR FROM created_at) = %d AND deleted_at IS NULL`, tahun)
+	kelasFilter := ""
 	if kelasID != nil {
-		baseWhere += fmt.Sprintf(` AND trx_bk_kasus.mst_siswa_id IN (
-			SELECT id FROM mst_siswa WHERE mst_kelas_id = %d AND deleted_at IS NULL
-		)`, *kelasID)
+		kelasFilter = fmt.Sprintf(` AND mst_siswa_id IN (SELECT id FROM mst_siswa WHERE mst_kelas_id = %d AND deleted_at IS NULL)`, *kelasID)
 	}
+	fullWhere := baseWhere + kelasFilter
 
 	var (
 		totalKasus   int64
@@ -824,25 +1071,27 @@ func (r *StatistikRepo) GetBK(ctx context.Context, tahun int, kelasID *int64) (*
 	g, gctx := errgroup.WithContext(ctx)
 	g.Go(func() error {
 		var err error
-		totalKasus, err = countQuery(gctx, r.db, fmt.Sprintf(`SELECT COUNT(*) FROM trx_bk_kasus WHERE %s`, baseWhere))
+		totalKasus, err = countQuery(gctx, r.db, fmt.Sprintf(`SELECT COUNT(*) FROM trx_bk_kasus WHERE %s`, fullWhere))
+		return err
+	})
+	g.Go(func() error {
+		// status 1=dibuka + 2=proses → "sedang ditangani"
+		var err error
+		kasusProses, err = countQuery(gctx, r.db, fmt.Sprintf(`SELECT COUNT(*) FROM trx_bk_kasus WHERE %s AND status IN (1,2)`, fullWhere))
 		return err
 	})
 	g.Go(func() error {
 		var err error
-		kasusProses, err = countQuery(gctx, r.db, fmt.Sprintf(`SELECT COUNT(*) FROM trx_bk_kasus WHERE %s AND status = 'proses'`, baseWhere))
+		kasusSelesai, err = countQuery(gctx, r.db, fmt.Sprintf(`SELECT COUNT(*) FROM trx_bk_kasus WHERE %s AND status = 3`, fullWhere))
 		return err
 	})
 	g.Go(func() error {
-		var err error
-		kasusSelesai, err = countQuery(gctx, r.db, fmt.Sprintf(`SELECT COUNT(*) FROM trx_bk_kasus WHERE %s AND status = 'selesai'`, baseWhere))
-		return err
-	})
-	g.Go(func() error {
+		// tanggal_mulai/selesai are date columns; subtraction returns integer days; AVG returns numeric → cast to float8
 		return r.db.QueryRowContext(gctx, fmt.Sprintf(`
-			SELECT COALESCE(AVG(tanggal_selesai::date - tanggal_mulai::date), 0)
+			SELECT COALESCE(AVG(tanggal_selesai - tanggal_mulai), 0)::float8
 			FROM trx_bk_kasus
 			WHERE %s AND tanggal_selesai IS NOT NULL AND tanggal_mulai IS NOT NULL
-		`, baseWhere)).Scan(&avgResolusi)
+		`, fullWhere)).Scan(&avgResolusi)
 	})
 
 	if err := g.Wait(); err != nil {
@@ -861,12 +1110,12 @@ func (r *StatistikRepo) GetBK(ctx context.Context, tahun int, kelasID *int64) (*
 	}
 	var trenRows []monthRow
 	_ = r.db.SelectContext(ctx, &trenRows, fmt.Sprintf(`
-		SELECT EXTRACT(MONTH FROM created_at)::int as bulan, COUNT(*) as total
+		SELECT EXTRACT(MONTH FROM created_at)::int AS bulan, COUNT(*) AS total
 		FROM trx_bk_kasus
 		WHERE %s
 		GROUP BY EXTRACT(MONTH FROM created_at)::int
 		ORDER BY bulan
-	`, baseWhere))
+	`, fullWhere))
 
 	trenMap := map[int]int64{}
 	for _, row := range trenRows {
@@ -879,20 +1128,46 @@ func (r *StatistikRepo) GetBK(ctx context.Context, tahun int, kelasID *int64) (*
 		trenData[m-1] = trenMap[m]
 	}
 
-	// Kategori distribution
+	// Status distribution (query all statuses dynamically)
+	statusNames := map[int]string{1: "Dibuka", 2: "Proses", 3: "Selesai", 4: "Dirujuk"}
+	statusColors := map[int]string{1: "#3B82F6", 2: "#F59E0B", 3: "#10B981", 4: "#8B5CF6"}
+	type statusRow struct {
+		Status int   `db:"status"`
+		Total  int64 `db:"total"`
+	}
+	var statusRows []statusRow
+	_ = r.db.SelectContext(ctx, &statusRows, fmt.Sprintf(`
+		SELECT status, COUNT(*) AS total
+		FROM trx_bk_kasus
+		WHERE %s
+		GROUP BY status
+		ORDER BY status
+	`, fullWhere))
+	statusDist := model.ChartSeries{}
+	for _, row := range statusRows {
+		name := statusNames[row.Status]
+		if name == "" {
+			name = fmt.Sprintf("Status %d", row.Status)
+		}
+		statusDist.Labels = append(statusDist.Labels, name)
+		statusDist.Data = append(statusDist.Data, row.Total)
+		statusDist.Colors = append(statusDist.Colors, statusColors[row.Status])
+	}
+
+	// Kategori distribution — no alias to avoid conflict with fullWhere bare column names
 	type labelTotal struct {
 		Nama  string `db:"nama"`
 		Total int64  `db:"total"`
 	}
 	var perKategori []labelTotal
 	_ = r.db.SelectContext(ctx, &perKategori, fmt.Sprintf(`
-		SELECT mk.nama, COUNT(*) as total
-		FROM trx_bk_kasus bk
-		JOIN mst_bk_kategori mk ON mk.id = bk.mst_bk_kategori_id
+		SELECT mk.nama, COUNT(*) AS total
+		FROM trx_bk_kasus
+		JOIN mst_bk_kategori mk ON mk.id = trx_bk_kasus.mst_bk_kategori_id
 		WHERE %s
 		GROUP BY mk.id, mk.nama
 		ORDER BY total DESC
-	`, baseWhere))
+	`, fullWhere))
 
 	distribusiKategori := model.ChartSeries{Colors: generateColors(len(perKategori))}
 	for _, k := range perKategori {
@@ -903,13 +1178,13 @@ func (r *StatistikRepo) GetBK(ctx context.Context, tahun int, kelasID *int64) (*
 	// Jenis distribution
 	var perJenis []labelTotal
 	_ = r.db.SelectContext(ctx, &perJenis, fmt.Sprintf(`
-		SELECT mj.nama, COUNT(*) as total
-		FROM trx_bk_kasus bk
-		JOIN mst_bk_jenis mj ON mj.id = bk.mst_bk_jenis_id
+		SELECT mj.nama, COUNT(*) AS total
+		FROM trx_bk_kasus
+		JOIN mst_bk_jenis mj ON mj.id = trx_bk_kasus.mst_bk_jenis_id
 		WHERE %s
 		GROUP BY mj.id, mj.nama
 		ORDER BY total DESC
-	`, baseWhere))
+	`, fullWhere))
 
 	distribusiJenis := model.ChartSeries{Colors: generateColors(len(perJenis))}
 	for _, j := range perJenis {
@@ -920,14 +1195,14 @@ func (r *StatistikRepo) GetBK(ctx context.Context, tahun int, kelasID *int64) (*
 	// Per kelas
 	var perKelas []labelTotal
 	_ = r.db.SelectContext(ctx, &perKelas, fmt.Sprintf(`
-		SELECT k.nama_kelas as nama, COUNT(bk.id) as total
-		FROM trx_bk_kasus bk
-		JOIN mst_siswa s ON s.id = bk.mst_siswa_id
+		SELECT k.nama_kelas AS nama, COUNT(trx_bk_kasus.id) AS total
+		FROM trx_bk_kasus
+		JOIN mst_siswa s ON s.id = trx_bk_kasus.mst_siswa_id
 		JOIN mst_kelas k ON k.id = s.mst_kelas_id
 		WHERE %s
 		GROUP BY k.id, k.nama_kelas
 		ORDER BY total DESC
-	`, baseWhere))
+	`, fullWhere))
 
 	distribusiKelas := model.ChartSeries{Colors: generateColors(len(perKelas))}
 	for _, k := range perKelas {
@@ -938,15 +1213,15 @@ func (r *StatistikRepo) GetBK(ctx context.Context, tahun int, kelasID *int64) (*
 	// Top siswa by kasus
 	var siswaItems []model.SiswaBKItem
 	_ = r.db.SelectContext(ctx, &siswaItems, fmt.Sprintf(`
-		SELECT s.id, s.nama, s.nis, k.nama_kelas, COUNT(bk.id) as total_kasus
-		FROM trx_bk_kasus bk
-		JOIN mst_siswa s ON s.id = bk.mst_siswa_id
+		SELECT s.id, s.nama, s.nis, k.nama_kelas, COUNT(trx_bk_kasus.id) AS total_kasus
+		FROM trx_bk_kasus
+		JOIN mst_siswa s ON s.id = trx_bk_kasus.mst_siswa_id
 		JOIN mst_kelas k ON k.id = s.mst_kelas_id
 		WHERE %s
 		GROUP BY s.id, s.nama, s.nis, k.nama_kelas
 		ORDER BY total_kasus DESC
 		LIMIT 10
-	`, baseWhere))
+	`, fullWhere))
 
 	return &model.BKResult{
 		Summary: model.BKSummary{
@@ -956,21 +1231,13 @@ func (r *StatistikRepo) GetBK(ctx context.Context, tahun int, kelasID *int64) (*
 			ResolusiRate:    resolusiRate,
 			AvgResolusiHari: round2(avgResolusi),
 		},
-		TrenKasusBulanan: model.ChartSeries{
-			Labels: trenLabels,
-			Data:   trenData,
-			Color:  "#EF4444",
-		},
-		StatusDistribution: model.ChartSeries{
-			Labels: []string{"Proses", "Selesai"},
-			Data:   []int64{kasusProses, kasusSelesai},
-			Colors: []string{"#F59E0B", "#10B981"},
-		},
-		DistribusiKategori: distribusiKategori,
-		DistribusiJenis:    distribusiJenis,
-		DistribusiPerKelas: distribusiKelas,
+		TrenKasusBulanan:     model.ChartSeries{Labels: trenLabels, Data: trenData, Color: "#EF4444"},
+		StatusDistribution:   statusDist,
+		DistribusiKategori:   distribusiKategori,
+		DistribusiJenis:      distribusiJenis,
+		DistribusiPerKelas:   distribusiKelas,
 		SiswaCasingTerbanyak: siswaItems,
-		Tahun: tahun,
+		Tahun:                tahun,
 	}, nil
 }
 
@@ -1047,9 +1314,9 @@ func (r *StatistikRepo) GetPPDB(ctx context.Context, tahun int) (*model.PPDBResu
 
 	// Per gelombang
 	type gelombangRow struct {
-		NamaGelombang  string  `db:"nama_gelombang"`
-		TotalPendaftar int64   `db:"total_pendaftar"`
-		TotalDiterima  int64   `db:"total_diterima"`
+		NamaGelombang  string `db:"nama_gelombang"`
+		TotalPendaftar int64  `db:"total_pendaftar"`
+		TotalDiterima  int64  `db:"total_diterima"`
 	}
 	var gelombangRows []gelombangRow
 	_ = r.db.SelectContext(ctx, &gelombangRows, fmt.Sprintf(`
@@ -1211,6 +1478,29 @@ func (r *StatistikRepo) GetPerpustakaan(ctx context.Context, tahun int) (*model.
 		LIMIT 10
 	`)
 
+	// Distribusi status peminjaman
+	type statusRow struct {
+		Status int   `db:"status"`
+		Total  int64 `db:"total"`
+	}
+	var statusRows []statusRow
+	_ = r.db.SelectContext(ctx, &statusRows, `
+		SELECT status, COUNT(*) AS total
+		FROM trx_peminjaman_buku
+		WHERE deleted_at IS NULL
+		GROUP BY status
+		ORDER BY status
+	`)
+	statusNames := map[int]string{1: "Dipinjam", 2: "Dikembalikan", 3: "Hilang"}
+	distribusiStatus := make([]model.StatusPinjamItem, 0, len(statusRows))
+	for _, row := range statusRows {
+		name := statusNames[row.Status]
+		if name == "" {
+			name = fmt.Sprintf("Status %d", row.Status)
+		}
+		distribusiStatus = append(distribusiStatus, model.StatusPinjamItem{Status: name, Jumlah: row.Total})
+	}
+
 	return &model.PerpustakaanResult{
 		Summary: model.PerpustakaanSummary{
 			TotalJudulBuku:  totalBuku,
@@ -1225,6 +1515,7 @@ func (r *StatistikRepo) GetPerpustakaan(ctx context.Context, tahun int) (*model.
 				{Label: "Dikembalikan", Data: kembali, Color: "#10B981"},
 			},
 		},
+		DistribusiStatus: distribusiStatus,
 		TopBukuDiminati:  topBuku,
 		SiswaAktifPinjam: siswaAktif,
 		Tahun:            tahun,
@@ -1246,10 +1537,10 @@ func (r *StatistikRepo) GetUjian(ctx context.Context, kelasID, mapelID *int64, s
 	}
 
 	var (
-		totalUjian   int64
-		totalNilai   int64
-		avgNilai     float64
-		passCount    int64
+		totalUjian int64
+		totalNilai int64
+		avgNilai   float64
+		passCount  int64
 	)
 
 	g, gctx := errgroup.WithContext(ctx)
@@ -1369,22 +1660,64 @@ func (r *StatistikRepo) GetUjian(ctx context.Context, kelasID, mapelID *int64, s
 	var topSiswa []model.TopSiswaItem
 	_ = r.db.SelectContext(ctx, &topSiswa, topQ)
 
+	// Tren rata-rata per semester
+	type semesterRow struct {
+		Semester string  `db:"semester"`
+		RataRata float64 `db:"rata_rata"`
+	}
+	var semesterRows []semesterRow
+	_ = r.db.SelectContext(ctx, &semesterRows, fmt.Sprintf(`
+		SELECT ms.nama AS semester, COALESCE(AVG(n.nilai), 0)::float8 AS rata_rata
+		FROM trx_nilai n
+		JOIN trx_ujian u ON u.id = n.trx_ujian_id
+		JOIN mst_semester ms ON ms.id = u.semester
+		WHERE %s
+		GROUP BY ms.id, ms.nama
+		ORDER BY ms.id
+	`, nilaiWhere))
+	trenPerSemester := make([]model.TrenSemesterItem, 0, len(semesterRows))
+	for _, row := range semesterRows {
+		trenPerSemester = append(trenPerSemester, model.TrenSemesterItem{Semester: row.Semester, RataRata: round2(row.RataRata)})
+	}
+
+	// Perbandingan rata-rata per kelas
+	type kelasAvgRow struct {
+		NamaKelas string  `db:"nama_kelas"`
+		RataRata  float64 `db:"rata_rata"`
+	}
+	var kelasAvgRows []kelasAvgRow
+	_ = r.db.SelectContext(ctx, &kelasAvgRows, fmt.Sprintf(`
+		SELECT k.nama_kelas, COALESCE(AVG(n.nilai), 0)::float8 AS rata_rata
+		FROM trx_nilai n
+		JOIN trx_ujian u ON u.id = n.trx_ujian_id
+		JOIN mst_siswa s ON s.id = n.mst_siswa_id
+		JOIN mst_kelas k ON k.id = s.mst_kelas_id
+		WHERE %s
+		GROUP BY k.id, k.nama_kelas
+		ORDER BY rata_rata DESC
+	`, nilaiWhere))
+	perbandinganChart := model.PerbandinganKelasChart{
+		Colors: generateColors(len(kelasAvgRows)),
+	}
+	for _, row := range kelasAvgRows {
+		perbandinganChart.Labels = append(perbandinganChart.Labels, row.NamaKelas)
+		perbandinganChart.RataRata = append(perbandinganChart.RataRata, round2(row.RataRata))
+	}
+
 	return &model.UjianResult{
 		Summary: model.UjianSummary{
-			TotalUjian:     totalUjian,
-			TotalNilai:     totalNilai,
-			AvgNilaiGlobal: round2(avgNilai),
-			PassRate:       passRate,
-			KKM:            kkm,
+			TotalUjian:         totalUjian,
+			TotalNilaiTercatat: totalNilai,
+			RataRataGlobal:     round2(avgNilai),
+			PassRate:           passRate,
+			KKM:                kkm,
 		},
-		PassRateChart: prChart,
-		Histogram: model.NilaiHistogram{
-			Labels: histLabels,
-			Data:   histData,
-			Colors: histColors,
-		},
-		TopPerformer: topSiswa,
-		Tahun:        time.Now().Year(),
+		PassRatePerMapel:     model.PassRateWrapper{Chart: prChart},
+		DistribusiNilai:      model.NilaiHistogram{Labels: histLabels, Data: histData, Colors: histColors},
+		TrenPerSemester:      trenPerSemester,
+		PerbandinganPerKelas: model.PerbandinganKelasWrapper{Chart: perbandinganChart},
+		Top10Performers:      topSiswa,
+		Tahun:                time.Now().Year(),
 	}, nil
 }
 
@@ -1706,14 +2039,25 @@ func (r *StatistikRepo) GetGuru(ctx context.Context, startDate, endDate string) 
 // ─── SPK ──────────────────────────────────────────────────────────────────
 
 func (r *StatistikRepo) GetSPK(ctx context.Context) (*model.SPKResult, error) {
-	var totalEvaluasi int64
+	var totalEvaluasi, totalKriteria int64
 	var avgSkor, skorTertinggi, skorTerendah float64
 
-	_ = r.db.QueryRowContext(ctx, `
-		SELECT COUNT(*), COALESCE(AVG(skor_akhir), 0),
-			COALESCE(MAX(skor_akhir), 0), COALESCE(MIN(skor_akhir), 0)
-		FROM spk_hasil WHERE deleted_at IS NULL
-	`).Scan(&totalEvaluasi, &avgSkor, &skorTertinggi, &skorTerendah)
+	g, gctx := errgroup.WithContext(ctx)
+	g.Go(func() error {
+		return r.db.QueryRowContext(gctx, `
+			SELECT COUNT(*), COALESCE(AVG(total_skor), 0)::float8,
+				COALESCE(MAX(total_skor), 0)::float8, COALESCE(MIN(total_skor), 0)::float8
+			FROM spk_hasil WHERE deleted_at IS NULL
+		`).Scan(&totalEvaluasi, &avgSkor, &skorTertinggi, &skorTerendah)
+	})
+	g.Go(func() error {
+		var err error
+		totalKriteria, err = countQuery(gctx, r.db, `SELECT COUNT(*) FROM spk_kriteria`)
+		return err
+	})
+	if err := g.Wait(); err != nil {
+		return nil, err
+	}
 
 	// Distribusi skor (range bands)
 	type distribRow struct {
@@ -1724,13 +2068,13 @@ func (r *StatistikRepo) GetSPK(ctx context.Context) (*model.SPKResult, error) {
 	_ = r.db.SelectContext(ctx, &distribRows, `
 		SELECT
 			CASE
-				WHEN skor_akhir < 0.2 THEN '0.0 – 0.2'
-				WHEN skor_akhir < 0.4 THEN '0.2 – 0.4'
-				WHEN skor_akhir < 0.6 THEN '0.4 – 0.6'
-				WHEN skor_akhir < 0.8 THEN '0.6 – 0.8'
+				WHEN total_skor < 0.2 THEN '0.0 – 0.2'
+				WHEN total_skor < 0.4 THEN '0.2 – 0.4'
+				WHEN total_skor < 0.6 THEN '0.4 – 0.6'
+				WHEN total_skor < 0.8 THEN '0.6 – 0.8'
 				ELSE '0.8 – 1.0'
-			END as rentang,
-			COUNT(*) as total
+			END AS rentang,
+			COUNT(*) AS total
 		FROM spk_hasil WHERE deleted_at IS NULL
 		GROUP BY rentang
 		ORDER BY rentang
@@ -1746,43 +2090,82 @@ func (r *StatistikRepo) GetSPK(ctx context.Context) (*model.SPKResult, error) {
 		distribData[i] = rentangMap[l]
 	}
 
-	// Rata-rata per kriteria
-	var kriteriaAvg []model.KriteriaAvg
-	_ = r.db.SelectContext(ctx, &kriteriaAvg, `
-		SELECT k.nama as nama_kriteria, ROUND(AVG(p.nilai_raw)::numeric, 2) as rata_rata
-		FROM spk_penilaian p
-		JOIN spk_kriteria k ON k.id = p.spk_kriteria_id
-		WHERE p.deleted_at IS NULL
-		GROUP BY k.id, k.nama
-		ORDER BY rata_rata DESC
+	// Bobot kriteria — chart (radar) + details table
+	var kriteriaRows []model.KriteriaBobot
+	_ = r.db.SelectContext(ctx, &kriteriaRows, `
+		SELECT nama_kriteria, bobot::float8 AS bobot
+		FROM spk_kriteria
+		ORDER BY bobot DESC
 	`)
+	bobotChart := model.ChartSeries{Colors: generateColors(len(kriteriaRows))}
+	for _, k := range kriteriaRows {
+		bobotChart.Labels = append(bobotChart.Labels, k.NamaKriteria)
+		bobotChart.Data = append(bobotChart.Data, 0) // float in chart - use details for values
+	}
+	// ChartSeries.Data is []int64 which loses float precision; store floats via colors trick not possible.
+	// Instead use a custom float slice via JSON. Use RataRataKriteria repurposed field — store via KriteriaBobot.Bobot.
+	// Actually: bobotChart.Data should carry bobot values multiplied for display.
+	// Frontend radar uses `bobot: bobotChart.data?.[i] ?? 0` - expects numbers.
+	// Build a separate ChartSeries-like struct with float data — use the generic approach:
+	// Encode as int64 by multiplying by 100 (percent representation) since bobot is e.g. 0.25
+	bobotChartFinal := model.ChartSeries{Colors: generateColors(len(kriteriaRows))}
+	for _, k := range kriteriaRows {
+		bobotChartFinal.Labels = append(bobotChartFinal.Labels, k.NamaKriteria)
+		bobotChartFinal.Data = append(bobotChartFinal.Data, int64(k.Bobot*100))
+	}
+
+	// Perbandingan rata-rata skor per kelas
+	type kelasAvgRow struct {
+		NamaKelas string  `db:"nama_kelas"`
+		AvgNilai  float64 `db:"avg_nilai"`
+	}
+	var kelasAvgRows []kelasAvgRow
+	_ = r.db.SelectContext(ctx, &kelasAvgRows, `
+		SELECT k.nama_kelas, COALESCE(AVG(h.total_skor), 0)::float8 AS avg_nilai
+		FROM spk_hasil h
+		JOIN mst_siswa s ON s.id = h.mst_siswa_id
+		JOIN mst_kelas k ON k.id = s.mst_kelas_id
+		WHERE h.deleted_at IS NULL
+		GROUP BY k.id, k.nama_kelas
+		ORDER BY avg_nilai DESC
+	`)
+	perbandinganKelas := model.SPKPerbandinganKelas{Colors: generateColors(len(kelasAvgRows))}
+	for _, row := range kelasAvgRows {
+		perbandinganKelas.Labels = append(perbandinganKelas.Labels, row.NamaKelas)
+		perbandinganKelas.AvgNilai = append(perbandinganKelas.AvgNilai, round2(row.AvgNilai))
+	}
 
 	// Top siswa by skor
 	var topSiswa []model.SPKSiswaItem
 	_ = r.db.SelectContext(ctx, &topSiswa, `
 		SELECT s.id, s.nama, s.nis, k.nama_kelas,
-			h.skor_akhir, h.peringkat
+			h.total_skor::float8 AS total_skor, h.peringkat
 		FROM spk_hasil h
 		JOIN mst_siswa s ON s.id = h.mst_siswa_id
 		JOIN mst_kelas k ON k.id = s.mst_kelas_id
 		WHERE h.deleted_at IS NULL
-		ORDER BY h.skor_akhir DESC
+		ORDER BY h.total_skor DESC
 		LIMIT 10
 	`)
 
 	return &model.SPKResult{
 		Summary: model.SPKSummary{
-			TotalEvaluasi: totalEvaluasi,
+			TotalHasil:    totalEvaluasi,
+			TotalKriteria: totalKriteria,
 			RataRataSkor:  round2(avgSkor),
 			SkorTertinggi: round2(skorTertinggi),
 			SkorTerendah:  round2(skorTerendah),
 		},
-		Distribusi: model.SPKDistribusi{
+		DistribusiSkor: model.SPKDistribusi{
 			Labels: rentangLabels,
 			Data:   distribData,
 			Colors: []string{"#EF4444", "#F59E0B", "#FBBF24", "#34D399", "#10B981"},
 		},
-		RataRataKriteria: kriteriaAvg,
-		TopSiswa:         topSiswa,
+		BobotKriteria: model.BobotKriteriaWrapper{
+			Chart:   bobotChartFinal,
+			Details: kriteriaRows,
+		},
+		PerbandinganPerKelas: perbandinganKelas,
+		Top10SPK:             topSiswa,
 	}, nil
 }

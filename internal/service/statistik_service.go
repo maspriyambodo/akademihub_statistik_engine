@@ -23,12 +23,12 @@ func (s *StatistikService) GetAkademik(ctx context.Context, tahunAjaranID, kelas
 	return s.repo.GetAkademik(ctx, tahunAjaranID, kelasID)
 }
 
-func (s *StatistikService) GetKehadiran(ctx context.Context, tahunAjaranID, kelasID *int64, bulan, tahun int) (*model.KehadiranResult, error) {
-	return s.repo.GetKehadiran(ctx, tahunAjaranID, kelasID, bulan, tahun)
+func (s *StatistikService) GetKehadiran(ctx context.Context, kelasID *int64, startDate, endDate string) (*model.KehadiranResult, error) {
+	return s.repo.GetKehadiran(ctx, kelasID, startDate, endDate)
 }
 
-func (s *StatistikService) GetKeuangan(ctx context.Context, tahun int) (*model.KeuanganResult, error) {
-	return s.repo.GetKeuangan(ctx, tahun)
+func (s *StatistikService) GetKeuangan(ctx context.Context, tahun int, kelasID *int64) (*model.KeuanganResult, error) {
+	return s.repo.GetKeuangan(ctx, tahun, kelasID)
 }
 
 func (s *StatistikService) GetBK(ctx context.Context, tahun int, kelasID *int64) (*model.BKResult, error) {

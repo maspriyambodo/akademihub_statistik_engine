@@ -67,9 +67,9 @@ func (h *StatistikHandler) Overview(w http.ResponseWriter, r *http.Request) {
 }
 
 // GET /api/v1/statistik/akademik
-// Query params: kelas_id, tahun_ajaran_id
+// Query params: mst_kelas_id, tahun_ajaran_id
 func (h *StatistikHandler) Akademik(w http.ResponseWriter, r *http.Request) {
-	kelasID := queryInt64(r, "kelas_id")
+	kelasID := queryInt64(r, "mst_kelas_id")
 	tahunAjaranID := queryInt64(r, "tahun_ajaran_id")
 
 	result, err := h.svc.GetAkademik(r.Context(), tahunAjaranID, kelasID)
@@ -81,14 +81,13 @@ func (h *StatistikHandler) Akademik(w http.ResponseWriter, r *http.Request) {
 }
 
 // GET /api/v1/statistik/kehadiran
-// Query params: kelas_id, tahun_ajaran_id, bulan, tahun
+// Query params: mst_kelas_id, start_date, end_date
 func (h *StatistikHandler) Kehadiran(w http.ResponseWriter, r *http.Request) {
-	kelasID := queryInt64(r, "kelas_id")
-	tahunAjaranID := queryInt64(r, "tahun_ajaran_id")
-	bulan := queryInt(r, "bulan", 0)
-	tahun := queryInt(r, "tahun", time.Now().Year())
+	kelasID := queryInt64(r, "mst_kelas_id")
+	startDate := r.URL.Query().Get("start_date")
+	endDate := r.URL.Query().Get("end_date")
 
-	result, err := h.svc.GetKehadiran(r.Context(), tahunAjaranID, kelasID, bulan, tahun)
+	result, err := h.svc.GetKehadiran(r.Context(), kelasID, startDate, endDate)
 	if err != nil {
 		jsonServerError(w, err.Error())
 		return
@@ -97,11 +96,12 @@ func (h *StatistikHandler) Kehadiran(w http.ResponseWriter, r *http.Request) {
 }
 
 // GET /api/v1/statistik/keuangan
-// Query params: tahun
+// Query params: tahun, mst_kelas_id
 func (h *StatistikHandler) Keuangan(w http.ResponseWriter, r *http.Request) {
 	tahun := queryInt(r, "tahun", time.Now().Year())
+	kelasID := queryInt64(r, "mst_kelas_id")
 
-	result, err := h.svc.GetKeuangan(r.Context(), tahun)
+	result, err := h.svc.GetKeuangan(r.Context(), tahun, kelasID)
 	if err != nil {
 		jsonServerError(w, err.Error())
 		return
@@ -110,10 +110,10 @@ func (h *StatistikHandler) Keuangan(w http.ResponseWriter, r *http.Request) {
 }
 
 // GET /api/v1/statistik/bk
-// Query params: tahun, kelas_id
+// Query params: tahun, mst_kelas_id
 func (h *StatistikHandler) BK(w http.ResponseWriter, r *http.Request) {
 	tahun := queryInt(r, "tahun", time.Now().Year())
-	kelasID := queryInt64(r, "kelas_id")
+	kelasID := queryInt64(r, "mst_kelas_id")
 
 	result, err := h.svc.GetBK(r.Context(), tahun, kelasID)
 	if err != nil {
@@ -150,9 +150,9 @@ func (h *StatistikHandler) Perpustakaan(w http.ResponseWriter, r *http.Request) 
 }
 
 // GET /api/v1/statistik/ujian
-// Query params: kelas_id, mapel_id, semester, kkm
+// Query params: mst_kelas_id, mapel_id, semester, kkm
 func (h *StatistikHandler) Ujian(w http.ResponseWriter, r *http.Request) {
-	kelasID := queryInt64(r, "kelas_id")
+	kelasID := queryInt64(r, "mst_kelas_id")
 	mapelID := queryInt64(r, "mapel_id")
 	semester := r.URL.Query().Get("semester")
 	kkm := queryFloat(r, "kkm", 75.0)

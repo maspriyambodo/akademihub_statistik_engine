@@ -40,21 +40,21 @@ type DatasetItem struct {
 // ─── Overview ─────────────────────────────────────────────────────────────
 
 type OverviewSummary struct {
-	TotalSiswa      int64 `json:"total_siswa"`
-	TotalGuru       int64 `json:"total_guru"`
-	TotalKelas      int64 `json:"total_kelas"`
-	HadirHariIni    int64 `json:"hadir_hari_ini"`
-	KasusBKProses   int64 `json:"kasus_bk_proses"`
-	PendaftarPPDB   int64 `json:"pendaftar_ppdb"`
-	BukuDipinjam    int64 `json:"buku_dipinjam"`
-	HasilSPK        int64 `json:"hasil_spk"`
+	TotalSiswa    int64 `json:"total_siswa"`
+	TotalGuru     int64 `json:"total_guru"`
+	TotalKelas    int64 `json:"total_kelas"`
+	HadirHariIni  int64 `json:"hadir_hari_ini"`
+	KasusBKProses int64 `json:"kasus_bk_proses"`
+	PendaftarPPDB int64 `json:"pendaftar_ppdb"`
+	BukuDipinjam  int64 `json:"buku_dipinjam"`
+	HasilSPK      int64 `json:"hasil_spk"`
 }
 
 type OverviewResult struct {
-	Summary        OverviewSummary      `json:"summary"`
-	KPICards       []KPICard            `json:"kpi_cards"`
-	Sparkline7Days SparklineData        `json:"sparkline_7_days"`
-	Meta           map[string]string    `json:"meta"`
+	Summary        OverviewSummary   `json:"summary"`
+	KPICards       []KPICard         `json:"kpi_cards"`
+	Sparkline7Days SparklineData     `json:"sparkline_7_days"`
+	Meta           map[string]string `json:"meta"`
 }
 
 type KPICard struct {
@@ -70,28 +70,30 @@ type KPICard struct {
 }
 
 type SparklineData struct {
-	Labels        []string `json:"labels"`
-	KehadiranSiswa []int64 `json:"kehadiran_siswa"`
-	PendapatanSPP  []int64 `json:"pendapatan_spp"`
-	KasusBK        []int64 `json:"kasus_bk"`
+	Labels         []string `json:"labels"`
+	KehadiranSiswa []int64  `json:"kehadiran_siswa"`
+	PendapatanSPP  []int64  `json:"pendapatan_spp"`
+	KasusBK        []int64  `json:"kasus_bk"`
 }
 
 // ─── Akademik ─────────────────────────────────────────────────────────────
 
 type AkademikResult struct {
-	Summary          AkademikSummary  `json:"summary"`
-	DistribusiGender ChartSeries      `json:"distribusi_gender"`
-	DistribusiKelas  ChartSeries      `json:"distribusi_kelas"`
-	NilaiHistogram   NilaiHistogram   `json:"nilai_histogram"`
-	TopSiswa         []TopSiswaItem   `json:"top_siswa"`
-	NilaiPerMapel    ChartSeries      `json:"nilai_per_mapel"`
+	Summary                   AkademikSummary     `json:"summary"`
+	DistribusiGender          ChartSeries         `json:"distribusi_gender"`
+	DistribusiSiswaPerKelas   ChartSeries         `json:"distribusi_siswa_per_kelas"`
+	DistribusiSiswaPerTingkat ChartSeries         `json:"distribusi_siswa_per_tingkat"`
+	DistribusiNilai           NilaiHistogram      `json:"distribusi_nilai"`
+	Top10SiswaBerprestasi     []TopSiswaItem      `json:"top_10_siswa_berprestasi"`
+	RataRataNilaiPerMapel     NilaiPerMapelSeries `json:"rata_rata_nilai_per_mapel"`
+	RataRataNilaiPerKelas     ChartSeries         `json:"rata_rata_nilai_per_kelas"`
 }
 
 type AkademikSummary struct {
-	TotalSiswa      int64   `json:"total_siswa"`
-	TotalGuru       int64   `json:"total_guru"`
-	TotalKelas      int64   `json:"total_kelas"`
-	RataRataNilai   float64 `json:"rata_rata_nilai"`
+	TotalSiswa    int64   `json:"total_siswa"`
+	TotalGuru     int64   `json:"total_guru"`
+	TotalKelas    int64   `json:"total_kelas"`
+	RataRataNilai float64 `json:"rata_rata_nilai"`
 }
 
 type NilaiHistogram struct {
@@ -100,78 +102,145 @@ type NilaiHistogram struct {
 	Colors []string `json:"colors"`
 }
 
+type NilaiPerMapelSeries struct {
+	Labels []string  `json:"labels"`
+	Avg    []float64 `json:"avg"`
+	Max    []float64 `json:"max"`
+	Min    []float64 `json:"min"`
+	Colors []string  `json:"colors"`
+}
+
 type TopSiswaItem struct {
 	ID        int64   `json:"id" db:"id"`
 	Nama      string  `json:"nama" db:"nama"`
 	NIS       string  `json:"nis" db:"nis"`
-	NamaKelas string  `json:"nama_kelas" db:"nama_kelas"`
+	NamaKelas string  `json:"kelas" db:"nama_kelas"`
 	RataRata  float64 `json:"rata_rata" db:"rata_rata"`
 }
 
 // ─── Kehadiran ─────────────────────────────────────────────────────────────
 
 type KehadiranResult struct {
-	Summary        KehadiranSummary `json:"summary"`
-	TrenBulanan    MultiSeriesChart `json:"tren_bulanan"`
-	StatusDonut    ChartSeries      `json:"status_donut"`
-	PerKelas       ChartSeries      `json:"per_kelas"`
-	GuruKehadiran  GuruKehadiran    `json:"guru_kehadiran"`
+	Summary             KehadiranSummary        `json:"summary"`
+	TrenKehadiran       []KehadiranTrenItem     `json:"tren_kehadiran"`
+	DistribusiStatus    []DistribusiStatusItem  `json:"distribusi_status"`
+	KehadiranPerKelas   []KehadiranPerKelasItem `json:"kehadiran_per_kelas"`
+	HeatmapHari         []HeatmapHariItem       `json:"heatmap_hari"`
+	SiswaAlphaTerbanyak []SiswaAlphaItem        `json:"siswa_alpha_terbanyak"`
 }
 
 type KehadiranSummary struct {
-	TotalHadir    int64   `json:"total_hadir"`
-	TotalIzin     int64   `json:"total_izin"`
-	TotalSakit    int64   `json:"total_sakit"`
-	TotalAlpha    int64   `json:"total_alpha"`
+	TingkatKehadiranSiswa float64 `json:"tingkat_kehadiran_siswa"`
+	TotalHadir            int64   `json:"total_hadir"`
+	TingkatKehadiranGuru  float64 `json:"tingkat_kehadiran_guru"`
+}
+
+type KehadiranTrenItem struct {
+	Tanggal string `json:"tanggal"`
+	Hadir   int64  `json:"hadir"`
+	Izin    int64  `json:"izin"`
+	Sakit   int64  `json:"sakit"`
+	Alpha   int64  `json:"alpha"`
+}
+
+type DistribusiStatusItem struct {
+	Status string `json:"status"`
+	Jumlah int64  `json:"jumlah"`
+}
+
+type KehadiranPerKelasItem struct {
+	Kelas      string  `json:"kelas"`
+	Persentase float64 `json:"persentase"`
+}
+
+type HeatmapHariItem struct {
+	Hari            string  `json:"hari"`
+	Hadir           int64   `json:"hadir"`
+	Izin            int64   `json:"izin"`
+	Sakit           int64   `json:"sakit"`
+	Alpha           int64   `json:"alpha"`
 	PersentaseHadir float64 `json:"persentase_hadir"`
 }
 
-type GuruKehadiran struct {
-	TotalHadir     int64   `json:"total_hadir"`
-	TotalAbsensi   int64   `json:"total_absensi"`
-	PersentaseHadir float64 `json:"persentase_hadir"`
+type SiswaAlphaItem struct {
+	Nama        string `json:"nama" db:"nama"`
+	NIS         string `json:"nis" db:"nis"`
+	Kelas       string `json:"kelas" db:"nama_kelas"`
+	JumlahAlpha int64  `json:"jumlah_alpha" db:"jumlah_alpha"`
 }
 
 // ─── Keuangan ─────────────────────────────────────────────────────────────
 
 type KeuanganResult struct {
-	Summary        KeuanganSummary  `json:"summary"`
-	TrenBulanan    ChartSeries      `json:"tren_bulanan"`
-	StatusDistribusi ChartSeries    `json:"status_distribusi"`
-	TunggakanPerKelas []TunggakanKelas `json:"tunggakan_per_kelas"`
+	Summary                 KeuanganSummary        `json:"summary"`
+	TrenPendapatan          []TrenPendapatanItem   `json:"tren_pendapatan"`
+	DistribusiStatus        []KeuanganStatusItem   `json:"distribusi_status"`
+	CollectionRatePerKelas  []CollectionRateKelas  `json:"collection_rate_per_kelas"`
+	TunggakanPerBulan       []TunggakanBulanItem   `json:"tunggakan_per_bulan"`
+	DistribusiMetode        []MetodePembayaranItem `json:"distribusi_metode"`
+	SiswaTunggakanTerbanyak []SiswaTunggakanItem   `json:"siswa_tunggakan_terbanyak"`
 }
 
 type KeuanganSummary struct {
-	TotalPendapatan  int64   `json:"total_pendapatan"`
-	TotalLunas       int64   `json:"total_lunas"`
-	TotalBelumLunas  int64   `json:"total_belum_lunas"`
-	PersentaseLunas  float64 `json:"persentase_lunas"`
+	TotalPendapatan int64   `json:"total_pendapatan"`
+	RataRataBulanan int64   `json:"rata_rata_bulanan"`
+	TotalTunggakan  int64   `json:"total_tunggakan"`
+	CollectionRate  float64 `json:"collection_rate"`
+	YoYGrowth       float64 `json:"yoy_growth"`
 }
 
-type TunggakanKelas struct {
-	NamaKelas    string `json:"nama_kelas" db:"nama_kelas"`
-	TotalTunggak int64  `json:"total_tunggak" db:"total_tunggak"`
+type TrenPendapatanItem struct {
+	Bulan           string `json:"bulan"`
+	Pendapatan      int64  `json:"pendapatan"`
+	JumlahTransaksi int64  `json:"jumlah_transaksi"`
+}
+
+type KeuanganStatusItem struct {
+	Status string `json:"status"`
+	Jumlah int64  `json:"jumlah"`
+}
+
+type CollectionRateKelas struct {
+	Kelas string  `json:"kelas"`
+	Rate  float64 `json:"rate"`
+}
+
+type TunggakanBulanItem struct {
+	Bulan     string `json:"bulan"`
+	Tunggakan int64  `json:"tunggakan"`
+}
+
+type MetodePembayaranItem struct {
+	Metode string `json:"metode"`
+	Jumlah int64  `json:"jumlah"`
+}
+
+type SiswaTunggakanItem struct {
+	Nama           string `json:"nama" db:"nama"`
+	Kelas          string `json:"kelas" db:"nama_kelas"`
+	TotalTunggakan int64  `json:"total_tunggakan" db:"total_tunggakan"`
+	JumlahBulan    int64  `json:"jumlah_bulan" db:"jumlah_bulan"`
 }
 
 // ─── BK ───────────────────────────────────────────────────────────────────
 
 type BKResult struct {
-	Summary            BKSummary      `json:"summary"`
-	TrenKasusBulanan   ChartSeries    `json:"tren_kasus_bulanan"`
-	StatusDistribution ChartSeries    `json:"status_distribution"`
-	DistribusiKategori ChartSeries    `json:"distribusi_kategori"`
-	DistribusiJenis    ChartSeries    `json:"distribusi_jenis"`
-	DistribusiPerKelas ChartSeries    `json:"distribusi_per_kelas"`
+	Summary              BKSummary     `json:"summary"`
+	TrenKasusBulanan     ChartSeries   `json:"tren_kasus_bulanan"`
+	StatusDistribution   ChartSeries   `json:"status_distribution"`
+	DistribusiKategori   ChartSeries   `json:"distribusi_kategori"`
+	DistribusiJenis      ChartSeries   `json:"distribusi_jenis"`
+	DistribusiPerKelas   ChartSeries   `json:"distribusi_per_kelas"`
 	SiswaCasingTerbanyak []SiswaBKItem `json:"siswa_kasus_terbanyak"`
-	Tahun              int            `json:"tahun"`
+	Tahun                int           `json:"tahun"`
 }
 
 type BKSummary struct {
-	TotalKasus       int64   `json:"total_kasus"`
-	KasusProses      int64   `json:"kasus_proses"`
-	KasusSelesai     int64   `json:"kasus_selesai"`
-	ResolusiRate     float64 `json:"resolusi_rate"`
-	AvgResolusiHari  float64 `json:"avg_resolusi_hari"`
+	TotalKasus      int64   `json:"total_kasus"`
+	KasusProses     int64   `json:"kasus_proses"`
+	KasusSelesai    int64   `json:"kasus_selesai"`
+	ResolusiRate    float64 `json:"resolusi_rate"`
+	AvgResolusiHari float64 `json:"avg_resolusi_hari"`
 }
 
 type SiswaBKItem struct {
@@ -186,10 +255,10 @@ type SiswaBKItem struct {
 
 type PPDBResult struct {
 	Summary             PPDBSummary         `json:"summary"`
-	Funnel              []FunnelItem         `json:"funnel"`
-	TrenPendaftaran     ChartSeries          `json:"tren_pendaftaran"`
-	DistribusiGelombang DistribusiGelombang  `json:"distribusi_gelombang"`
-	Tahun               int                  `json:"tahun"`
+	Funnel              []FunnelItem        `json:"funnel"`
+	TrenPendaftaran     ChartSeries         `json:"tren_pendaftaran"`
+	DistribusiGelombang DistribusiGelombang `json:"distribusi_gelombang"`
+	Tahun               int                 `json:"tahun"`
 }
 
 type PPDBSummary struct {
@@ -221,6 +290,7 @@ type DistribusiGelombang struct {
 type PerpustakaanResult struct {
 	Summary          PerpustakaanSummary `json:"summary"`
 	TrenPeminjaman   MultiSeriesChart    `json:"tren_peminjaman"`
+	DistribusiStatus []StatusPinjamItem  `json:"distribusi_status"`
 	TopBukuDiminati  []BukuItem          `json:"top_buku_diminati"`
 	SiswaAktifPinjam []SiswaPinjamItem   `json:"siswa_aktif_pinjam"`
 	Tahun            int                 `json:"tahun"`
@@ -234,51 +304,77 @@ type PerpustakaanSummary struct {
 }
 
 type BukuItem struct {
-	Judul        string `json:"judul" db:"judul"`
-	Penulis      string `json:"penulis" db:"penulis"`
-	TotalDipinjam int64 `json:"total_dipinjam" db:"total_dipinjam"`
+	Judul         string `json:"judul" db:"judul"`
+	Penulis       string `json:"penulis" db:"penulis"`
+	TotalDipinjam int64  `json:"total_dipinjam" db:"total_dipinjam"`
 }
 
 type SiswaPinjamItem struct {
-	Nama       string `json:"nama" db:"nama"`
-	NIS        string `json:"nis" db:"nis"`
-	NamaKelas  string `json:"nama_kelas" db:"nama_kelas"`
-	TotalPinjam int64 `json:"total_pinjam" db:"total_pinjam"`
+	Nama        string `json:"nama" db:"nama"`
+	NIS         string `json:"nis" db:"nis"`
+	NamaKelas   string `json:"nama_kelas" db:"nama_kelas"`
+	TotalPinjam int64  `json:"total_pinjam" db:"total_pinjam"`
+}
+
+type StatusPinjamItem struct {
+	Status string `json:"status"`
+	Jumlah int64  `json:"jumlah"`
 }
 
 // ─── Ujian ────────────────────────────────────────────────────────────────
 
 type UjianResult struct {
-	Summary       UjianSummary    `json:"summary"`
-	PassRateChart PassRateChart   `json:"pass_rate_chart"`
-	Histogram     NilaiHistogram  `json:"histogram"`
-	TopPerformer  []TopSiswaItem  `json:"top_performers"`
-	Tahun         int             `json:"tahun"`
+	Summary              UjianSummary             `json:"summary"`
+	PassRatePerMapel     PassRateWrapper          `json:"pass_rate_per_mapel"`
+	DistribusiNilai      NilaiHistogram           `json:"distribusi_nilai"`
+	TrenPerSemester      []TrenSemesterItem       `json:"tren_per_semester"`
+	PerbandinganPerKelas PerbandinganKelasWrapper `json:"perbandingan_per_kelas"`
+	Top10Performers      []TopSiswaItem           `json:"top_10_performers"`
+	Tahun                int                      `json:"tahun"`
 }
 
 type UjianSummary struct {
-	TotalUjian      int64   `json:"total_ujian"`
-	TotalNilai      int64   `json:"total_nilai"`
-	AvgNilaiGlobal  float64 `json:"avg_nilai_global"`
-	PassRate        float64 `json:"pass_rate"`
-	KKM             float64 `json:"kkm"`
+	TotalUjian         int64   `json:"total_ujian"`
+	TotalNilaiTercatat int64   `json:"total_nilai_tercatat"`
+	RataRataGlobal     float64 `json:"rata_rata_global"`
+	PassRate           float64 `json:"pass_rate"`
+	KKM                float64 `json:"kkm"`
 }
 
 type PassRateChart struct {
-	Labels    []string  `json:"labels"`
-	Lulus     []int64   `json:"lulus"`
-	TidakLulus []int64  `json:"tidak_lulus"`
-	PassRate  []float64 `json:"pass_rate"`
+	Labels     []string  `json:"labels"`
+	Lulus      []int64   `json:"lulus"`
+	TidakLulus []int64   `json:"tidak_lulus"`
+	PassRate   []float64 `json:"pass_rate"`
+}
+
+type PassRateWrapper struct {
+	Chart PassRateChart `json:"chart"`
+}
+
+type TrenSemesterItem struct {
+	Semester string  `json:"semester"`
+	RataRata float64 `json:"rata_rata"`
+}
+
+type PerbandinganKelasChart struct {
+	Labels   []string  `json:"labels"`
+	RataRata []float64 `json:"rata_rata"`
+	Colors   []string  `json:"colors"`
+}
+
+type PerbandinganKelasWrapper struct {
+	Chart PerbandinganKelasChart `json:"chart"`
 }
 
 // ─── Ekstrakurikuler ───────────────────────────────────────────────────────
 
 type EkstrakurikulerResult struct {
-	Summary              EkstrakurikulerSummary `json:"summary"`
-	DistribusiPerEkskul  ChartSeries            `json:"distribusi_per_ekskul"`
-	TrenPendaftaran      ChartSeries            `json:"tren_pendaftaran"`
-	DistribusiPerKelas   ChartSeries            `json:"distribusi_per_kelas"`
-	Tahun                int                    `json:"tahun"`
+	Summary             EkstrakurikulerSummary `json:"summary"`
+	DistribusiPerEkskul ChartSeries            `json:"distribusi_per_ekskul"`
+	TrenPendaftaran     ChartSeries            `json:"tren_pendaftaran"`
+	DistribusiPerKelas  ChartSeries            `json:"distribusi_per_kelas"`
+	Tahun               int                    `json:"tahun"`
 }
 
 type EkstrakurikulerSummary struct {
@@ -290,10 +386,10 @@ type EkstrakurikulerSummary struct {
 // ─── Organisasi ────────────────────────────────────────────────────────────
 
 type OrganisasiResult struct {
-	Summary                OrganisasiSummary `json:"summary"`
-	DistribusiPerOrganisasi ChartSeries      `json:"distribusi_per_organisasi"`
-	DistribusiPerJabatan   ChartSeries       `json:"distribusi_per_jabatan"`
-	DistribusiPerKelas     ChartSeries       `json:"distribusi_per_kelas"`
+	Summary                 OrganisasiSummary `json:"summary"`
+	DistribusiPerOrganisasi ChartSeries       `json:"distribusi_per_organisasi"`
+	DistribusiPerJabatan    ChartSeries       `json:"distribusi_per_jabatan"`
+	DistribusiPerKelas      ChartSeries       `json:"distribusi_per_kelas"`
 }
 
 type OrganisasiSummary struct {
@@ -305,18 +401,18 @@ type OrganisasiSummary struct {
 // ─── Guru ─────────────────────────────────────────────────────────────────
 
 type GuruResult struct {
-	Summary           GuruSummary      `json:"summary"`
-	DistribusiPerMapel ChartSeries     `json:"distribusi_per_mapel"`
-	KehadiranBreakdown GuruBreakdown   `json:"kehadiran_breakdown"`
-	TrenKehadiranGuru  []GuruTrenItem  `json:"tren_kehadiran_guru"`
+	Summary            GuruSummary       `json:"summary"`
+	DistribusiPerMapel ChartSeries       `json:"distribusi_per_mapel"`
+	KehadiranBreakdown GuruBreakdown     `json:"kehadiran_breakdown"`
+	TrenKehadiranGuru  []GuruTrenItem    `json:"tren_kehadiran_guru"`
 	Periode            map[string]string `json:"periode"`
 }
 
 type GuruSummary struct {
-	TotalGuru      int64   `json:"total_guru"`
-	HadirRate      float64 `json:"hadir_rate"`
-	TotalHadir     int64   `json:"total_hadir"`
-	TotalAbsensiHari int64 `json:"total_absensi_hari"`
+	TotalGuru        int64   `json:"total_guru"`
+	HadirRate        float64 `json:"hadir_rate"`
+	TotalHadir       int64   `json:"total_hadir"`
+	TotalAbsensiHari int64   `json:"total_absensi_hari"`
 }
 
 type GuruBreakdown struct {
@@ -335,14 +431,16 @@ type GuruTrenItem struct {
 // ─── SPK ──────────────────────────────────────────────────────────────────
 
 type SPKResult struct {
-	Summary        SPKSummary    `json:"summary"`
-	Distribusi     SPKDistribusi `json:"distribusi"`
-	RataRataKriteria []KriteriaAvg `json:"rata_rata_kriteria"`
-	TopSiswa       []SPKSiswaItem `json:"top_siswa"`
+	Summary              SPKSummary           `json:"summary"`
+	DistribusiSkor       SPKDistribusi        `json:"distribusi_skor"`
+	BobotKriteria        BobotKriteriaWrapper `json:"bobot_kriteria"`
+	PerbandinganPerKelas SPKPerbandinganKelas `json:"perbandingan_per_kelas"`
+	Top10SPK             []SPKSiswaItem       `json:"top_10_spk"`
 }
 
 type SPKSummary struct {
-	TotalEvaluasi int64   `json:"total_evaluasi"`
+	TotalHasil    int64   `json:"total_hasil"`
+	TotalKriteria int64   `json:"total_kriteria"`
 	RataRataSkor  float64 `json:"rata_rata_skor"`
 	SkorTertinggi float64 `json:"skor_tertinggi"`
 	SkorTerendah  float64 `json:"skor_terendah"`
@@ -354,9 +452,20 @@ type SPKDistribusi struct {
 	Colors []string `json:"colors"`
 }
 
-type KriteriaAvg struct {
+type KriteriaBobot struct {
 	NamaKriteria string  `json:"nama_kriteria" db:"nama_kriteria"`
-	RataRata     float64 `json:"rata_rata" db:"rata_rata"`
+	Bobot        float64 `json:"bobot" db:"bobot"`
+}
+
+type BobotKriteriaWrapper struct {
+	Chart   ChartSeries     `json:"chart"`
+	Details []KriteriaBobot `json:"details"`
+}
+
+type SPKPerbandinganKelas struct {
+	Labels   []string  `json:"labels"`
+	AvgNilai []float64 `json:"avg_nilai"`
+	Colors   []string  `json:"colors"`
 }
 
 type SPKSiswaItem struct {
@@ -364,6 +473,6 @@ type SPKSiswaItem struct {
 	Nama      string  `json:"nama" db:"nama"`
 	NIS       string  `json:"nis" db:"nis"`
 	NamaKelas string  `json:"nama_kelas" db:"nama_kelas"`
-	SkorAkhir float64 `json:"skor_akhir" db:"skor_akhir"`
+	TotalSkor float64 `json:"total_skor" db:"total_skor"`
 	Peringkat int     `json:"peringkat" db:"peringkat"`
 }
