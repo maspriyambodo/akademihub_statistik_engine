@@ -1943,7 +1943,7 @@ func (r *StatistikRepo) GetGuru(ctx context.Context, startDate, endDate string) 
 	g.Go(func() error {
 		var err error
 		guruHadir, err = countQuery(gctx, r.db,
-			`SELECT COUNT(*) FROM trx_absensi_guru WHERE tanggal BETWEEN $1 AND $2 AND jam_masuk IS NOT NULL AND deleted_at IS NULL`,
+			`SELECT COUNT(*) FROM trx_absensi_guru WHERE tanggal BETWEEN $1 AND $2 AND status = 1 AND deleted_at IS NULL`,
 			startDate, endDate)
 		return err
 	})
@@ -1996,9 +1996,10 @@ func (r *StatistikRepo) GetGuru(ctx context.Context, startDate, endDate string) 
 	var breakdown statusRow
 	_ = r.db.QueryRowContext(ctx, `
 		SELECT
-			SUM(CASE WHEN jam_masuk IS NOT NULL THEN 1 ELSE 0 END) as hadir,
-			0 as izin, 0 as sakit,
-			SUM(CASE WHEN jam_masuk IS NULL THEN 1 ELSE 0 END) as alpha
+			SUM(CASE WHEN status = 1 THEN 1 ELSE 0 END) as hadir,
+			SUM(CASE WHEN status = 2 THEN 1 ELSE 0 END) as izin,
+			SUM(CASE WHEN status = 3 THEN 1 ELSE 0 END) as sakit,
+			SUM(CASE WHEN status = 4 THEN 1 ELSE 0 END) as alpha
 		FROM trx_absensi_guru
 		WHERE tanggal BETWEEN $1 AND $2 AND deleted_at IS NULL
 	`, startDate, endDate).Scan(&breakdown.HadirCount, &breakdown.IzinCount, &breakdown.SakitCount, &breakdown.AlphaCount)
@@ -2007,7 +2008,7 @@ func (r *StatistikRepo) GetGuru(ctx context.Context, startDate, endDate string) 
 	var trenRows []model.GuruTrenItem
 	_ = r.db.SelectContext(ctx, &trenRows, `
 		SELECT tanggal::text, COUNT(*) as total,
-			SUM(CASE WHEN jam_masuk IS NOT NULL THEN 1 ELSE 0 END) as hadir
+			SUM(CASE WHEN status = 1 THEN 1 ELSE 0 END) as hadir
 		FROM trx_absensi_guru
 		WHERE tanggal BETWEEN $1 AND $2 AND deleted_at IS NULL
 		GROUP BY tanggal
