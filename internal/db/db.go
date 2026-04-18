@@ -3,16 +3,23 @@ package db
 import (
 	"time"
 
+	pgxv5 "github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/stdlib"
 	"github.com/jmoiron/sqlx"
-	_ "github.com/lib/pq"
 	"github.com/sekolahpintar/statistik-engine/internal/config"
 )
 
 func New(cfg *config.Config) (*sqlx.DB, error) {
-	database, err := sqlx.Open("postgres", cfg.DB.DSN())
+	connConfig, err := pgxv5.ParseConfig(cfg.DB.DSN())
 	if err != nil {
 		return nil, err
 	}
+	// Use simple protocol so pgbouncer transaction-pooling mode does not
+	// break on cached prepared statements ("unnamed prepared statement does
+	// not exist").
+	connConfig.DefaultQueryExecMode = pgxv5.QueryExecModeSimpleProtocol
+	stdDB := stdlib.OpenDB(*connConfig)
+	database := sqlx.NewDb(stdDB, "pgx")
 
 	database.SetMaxOpenConns(30)
 	database.SetMaxIdleConns(10)
