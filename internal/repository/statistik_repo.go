@@ -1053,8 +1053,8 @@ func (r *StatistikRepo) GetKeuangan(ctx context.Context, tahun int, kelasID *int
 // ─── BK ───────────────────────────────────────────────────────────────────
 
 func (r *StatistikRepo) GetBK(ctx context.Context, tahun int, kelasID *int64) (*model.BKResult, error) {
-	// baseWhere uses bare column names (no alias) — works for all queries since we avoid table aliases
-	baseWhere := fmt.Sprintf(`EXTRACT(YEAR FROM created_at) = %d AND deleted_at IS NULL`, tahun)
+	// qualify with table name to avoid ambiguous column errors in JOIN queries
+	baseWhere := fmt.Sprintf(`EXTRACT(YEAR FROM trx_bk_kasus.created_at) = %d AND trx_bk_kasus.deleted_at IS NULL`, tahun)
 	kelasFilter := ""
 	if kelasID != nil {
 		kelasFilter = fmt.Sprintf(` AND mst_siswa_id IN (SELECT id FROM mst_siswa WHERE mst_kelas_id = %d AND deleted_at IS NULL)`, *kelasID)
